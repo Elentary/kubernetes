@@ -399,7 +399,7 @@ func InitMetrics() {
 		&metrics.GaugeOpts{
 			Subsystem:      SchedulerSubsystem,
 			Name:           "plugin_node_score",
-			Help:           "Score given by a scheduling plugin to a node for a pod. This metric shows the last score assigned during scheduling.",
+			Help:           "Score given by a scheduling plugin to a node for a pod during the most recent scheduling cycle.",
 			StabilityLevel: metrics.ALPHA,
 		},
 		[]string{"plugin", "node", "pod"})

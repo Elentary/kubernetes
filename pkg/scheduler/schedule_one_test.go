@@ -4365,7 +4365,7 @@ func Test_prioritizeNodes_PluginNodeScoreMetric(t *testing.T) {
 					if totalCount != test.wantMetricCount {
 						t.Errorf("expected %d metric series, got %d", test.wantMetricCount, totalCount)
 					}
-					// Verify each gauge has a node label
+					// Verify each gauge has node and plugin labels
 					for _, m := range mf.GetMetric() {
 						var hasNode, hasPlugin bool
 						for _, lp := range m.GetLabel() {
