@@ -972,6 +972,14 @@ func prioritizeNodes(
 		return nil, scoreStatus.AsError()
 	}
 
+	// Record plugin scores as Prometheus metrics.
+	profileName := schedFramework.ProfileName()
+	for _, nodeScore := range nodesScores {
+		for _, pluginScore := range nodeScore.Scores {
+			metrics.PluginNodeScore.WithLabelValues(pluginScore.Name, profileName).Observe(float64(pluginScore.Score))
+		}
+	}
+
 	// Additional details logged at level 10 if enabled.
 	loggerVTen := logger.V(10)
 	if loggerVTen.Enabled() {
