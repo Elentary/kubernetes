@@ -139,7 +139,7 @@ var (
 	CacheSize             *metrics.GaugeVec
 	unschedulableReasons  *metrics.GaugeVec
 	PluginEvaluationTotal *metrics.CounterVec
-	PluginNodeScore       *metrics.HistogramVec
+	PluginNodeScore       *metrics.GaugeVec
 
 	// The below two are only available when the QHint feature gate is enabled.
 	queueingHintExecutionDuration *metrics.HistogramVec
@@ -395,15 +395,14 @@ func InitMetrics() {
 			StabilityLevel: metrics.ALPHA,
 		}, []string{"plugin", "extension_point", "profile"})
 
-	PluginNodeScore = metrics.NewHistogramVec(
-		&metrics.HistogramOpts{
+	PluginNodeScore = metrics.NewGaugeVec(
+		&metrics.GaugeOpts{
 			Subsystem:      SchedulerSubsystem,
 			Name:           "plugin_node_score",
-			Help:           "Score given by a scheduling plugin to a node for a pod.",
-			Buckets:        metrics.LinearBuckets(0, 10, 11), // 0, 10, 20, ..., 100
+			Help:           "Score given by a scheduling plugin to a node for a pod. This metric shows the last score assigned during scheduling.",
 			StabilityLevel: metrics.ALPHA,
 		},
-		[]string{"plugin", "profile"})
+		[]string{"plugin", "node", "pod"})
 
 	PreemptionGoroutinesDuration = metrics.NewHistogramVec(
 		&metrics.HistogramOpts{

@@ -4307,7 +4307,7 @@ func Test_prioritizeNodes_PluginNodeScoreMetric(t *testing.T) {
 				tf.RegisterScorePlugin(noderesources.BalancedAllocationName, frameworkruntime.FactoryAdapter(feature.Features{}, noderesources.NewBalancedAllocation), 1),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
-			// 1 plugin * 2 nodes = 2 observations
+			// 1 plugin * 2 nodes = 2 gauge values
 			wantMetricCount: 2,
 		},
 	}
@@ -4352,7 +4352,7 @@ func Test_prioritizeNodes_PluginNodeScoreMetric(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			// Collect metrics and verify observations were recorded.
+			// Collect metrics and verify gauge values were recorded.
 			metricFamilies, err := metrics.GetGather().Gather()
 			if err != nil {
 				t.Fatalf("failed to gather metrics: %v", err)
@@ -4361,12 +4361,27 @@ func Test_prioritizeNodes_PluginNodeScoreMetric(t *testing.T) {
 			for _, mf := range metricFamilies {
 				if mf.GetName() == "scheduler_plugin_node_score" {
 					found = true
-					totalCount := 0
-					for _, m := range mf.GetMetric() {
-						totalCount += int(m.GetHistogram().GetSampleCount())
-					}
+					totalCount := len(mf.GetMetric())
 					if totalCount != test.wantMetricCount {
-						t.Errorf("expected %d metric observations, got %d", test.wantMetricCount, totalCount)
+						t.Errorf("expected %d metric series, got %d", test.wantMetricCount, totalCount)
+					}
+					// Verify each gauge has a node label
+					for _, m := range mf.GetMetric() {
+						var hasNode, hasPlugin bool
+						for _, lp := range m.GetLabel() {
+							if lp.GetName() == "node" && lp.GetValue() != "" {
+								hasNode = true
+							}
+							if lp.GetName() == "plugin" && lp.GetValue() != "" {
+								hasPlugin = true
+							}
+						}
+						if !hasNode {
+							t.Errorf("expected node label on metric, but not found")
+						}
+						if !hasPlugin {
+							t.Errorf("expected plugin label on metric, but not found")
+						}
 					}
 				}
 			}

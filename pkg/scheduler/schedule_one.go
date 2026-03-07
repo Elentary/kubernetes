@@ -973,10 +973,10 @@ func prioritizeNodes(
 	}
 
 	// Record plugin scores as Prometheus metrics.
-	profileName := schedFramework.ProfileName()
+	podKey := klog.KObj(pod).String()
 	for _, nodeScore := range nodesScores {
 		for _, pluginScore := range nodeScore.Scores {
-			metrics.PluginNodeScore.WithLabelValues(pluginScore.Name, profileName).Observe(float64(pluginScore.Score))
+			metrics.PluginNodeScore.WithLabelValues(pluginScore.Name, nodeScore.Name, podKey).Set(float64(pluginScore.Score))
 		}
 	}
 
