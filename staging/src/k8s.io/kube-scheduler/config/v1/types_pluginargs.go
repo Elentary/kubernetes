@@ -191,6 +191,23 @@ type NodeAffinityArgs struct {
 	AddedAffinity *corev1.NodeAffinity `json:"addedAffinity,omitempty"`
 }
 
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// NamespaceResourceGuaranteeArgs holds arguments for the NamespaceResourceGuarantee plugin.
+type NamespaceResourceGuaranteeArgs struct {
+	metav1.TypeMeta `json:",inline"`
+
+	// NamespaceGPUGuarantees maps each namespace to the maximum number of
+	// protected nvidia.com/gpu that may be scheduled concurrently.
+	// +optional
+	NamespaceGPUGuarantees map[string]int64 `json:"namespaceGPUGuarantees,omitempty"`
+
+	// ProtectedPriorityClassName is the name of the PriorityClass whose pods
+	// are subject to the per-namespace GPU guarantee enforcement.
+	// +optional
+	ProtectedPriorityClassName string `json:"protectedPriorityClassName,omitempty"`
+}
+
 // ScoringStrategyType the type of scoring strategy used in NodeResourcesFit plugin.
 type ScoringStrategyType string
 
