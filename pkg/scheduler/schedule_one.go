@@ -974,6 +974,14 @@ func prioritizeNodes(
 		return nil, scoreStatus.AsError()
 	}
 
+	// Record plugin scores as Prometheus metrics.
+	podKey := klog.KObj(pod).String()
+	for _, nodeScore := range nodesScores {
+		for _, pluginScore := range nodeScore.Scores {
+			metrics.PluginNodeScore.WithLabelValues(pluginScore.Name, nodeScore.Name, podKey).Set(float64(pluginScore.Score))
+		}
+	}
+
 	// Additional details logged at level 10 if enabled.
 	loggerVTen := logger.V(10)
 	if loggerVTen.Enabled() {

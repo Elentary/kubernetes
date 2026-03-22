@@ -4303,6 +4303,111 @@ func Test_prioritizeNodes(t *testing.T) {
 	}
 }
 
+func Test_prioritizeNodes_PluginNodeScoreMetric(t *testing.T) {
+	metrics.Register()
+	metrics.PluginNodeScore.Reset()
+
+	tests := []struct {
+		name                string
+		pod                 *v1.Pod
+		nodes               []*v1.Node
+		pluginRegistrations []tf.RegisterPluginFunc
+		wantMetricCount     int
+	}{
+		{
+			name:  "plugin scores are recorded as metrics",
+			pod:   &v1.Pod{},
+			nodes: []*v1.Node{makeNode("node1", 1000, schedutil.DefaultMemoryRequest*10), makeNode("node2", 1000, schedutil.DefaultMemoryRequest*10)},
+			pluginRegistrations: []tf.RegisterPluginFunc{
+				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
+				tf.RegisterScorePlugin(noderesources.BalancedAllocationName, frameworkruntime.FactoryAdapter(feature.Features{}, noderesources.NewBalancedAllocation), 1),
+				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
+			},
+			// 1 plugin * 2 nodes = 2 gauge values
+			wantMetricCount: 2,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			metrics.PluginNodeScore.Reset()
+
+			client := clientsetfake.NewClientset()
+			informerFactory := informers.NewSharedInformerFactory(client, 0)
+
+			_, ctx := ktesting.NewTestContext(t)
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			cache := internalcache.New(ctx, nil)
+			for _, node := range test.nodes {
+				cache.AddNode(klog.FromContext(ctx), node)
+			}
+			snapshot := internalcache.NewEmptySnapshot()
+			if err := cache.UpdateSnapshot(klog.FromContext(ctx), snapshot); err != nil {
+				t.Fatal(err)
+			}
+			schedFramework, err := tf.NewFramework(
+				ctx,
+				test.pluginRegistrations, "",
+				frameworkruntime.WithInformerFactory(informerFactory),
+				frameworkruntime.WithSnapshotSharedLister(snapshot),
+				frameworkruntime.WithClientSet(client),
+				frameworkruntime.WithPodNominator(internalqueue.NewSchedulingQueue(nil, informerFactory)),
+			)
+			if err != nil {
+				t.Fatalf("error creating framework: %+v", err)
+			}
+
+			state := framework.NewCycleState()
+			nodeInfos, err := snapshot.NodeInfos().List()
+			if err != nil {
+				t.Fatalf("failed to list node from snapshot: %v", err)
+			}
+			_, err = prioritizeNodes(ctx, nil, schedFramework, state, test.pod, nodeInfos)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// Collect metrics and verify gauge values were recorded.
+			metricFamilies, err := metrics.GetGather().Gather()
+			if err != nil {
+				t.Fatalf("failed to gather metrics: %v", err)
+			}
+			var found bool
+			for _, mf := range metricFamilies {
+				if mf.GetName() == "scheduler_plugin_node_score" {
+					found = true
+					totalCount := len(mf.GetMetric())
+					if totalCount != test.wantMetricCount {
+						t.Errorf("expected %d metric series, got %d", test.wantMetricCount, totalCount)
+					}
+					// Verify each gauge has node and plugin labels
+					for _, m := range mf.GetMetric() {
+						var hasNode, hasPlugin bool
+						for _, lp := range m.GetLabel() {
+							if lp.GetName() == "node" && lp.GetValue() != "" {
+								hasNode = true
+							}
+							if lp.GetName() == "plugin" && lp.GetValue() != "" {
+								hasPlugin = true
+							}
+						}
+						if !hasNode {
+							t.Errorf("expected node label on metric, but not found")
+						}
+						if !hasPlugin {
+							t.Errorf("expected plugin label on metric, but not found")
+						}
+					}
+				}
+			}
+			if !found {
+				t.Errorf("metric scheduler_plugin_node_score not found")
+			}
+		})
+	}
+}
+
 var lowPriority, midPriority, highPriority = int32(0), int32(100), int32(1000)
 
 func TestNumFeasibleNodesToFind(t *testing.T) {
