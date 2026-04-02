@@ -1509,6 +1509,7 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		metricsv1beta1.NodeMetricsList{}.OpenAPIModelName():                                                             schema_pkg_apis_metrics_v1beta1_NodeMetricsList(ref),
 		metricsv1beta1.PodMetrics{}.OpenAPIModelName():                                                                  schema_pkg_apis_metrics_v1beta1_PodMetrics(ref),
 		metricsv1beta1.PodMetricsList{}.OpenAPIModelName():                                                              schema_pkg_apis_metrics_v1beta1_PodMetricsList(ref),
+		"k8s.io/kube-scheduler/config/v1.NamespaceResourceGuaranteeArgs":                                        schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref),
 	}
 }
 
@@ -69491,6 +69492,68 @@ func schema_k8sio_kube_scheduler_config_v1_KubeSchedulerProfile(ref common.Refer
 		},
 		Dependencies: []string{
 			configv1.PluginConfig{}.OpenAPIModelName(), configv1.Plugins{}.OpenAPIModelName()},
+	}
+}
+
+func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "NamespaceResourceGuaranteeArgs holds arguments used to configure the NamespaceResourceGuarantee plugin.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"apiVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"protectedPriorityClassName": {
+						SchemaProps: spec.SchemaProps{
+							Description: "ProtectedPriorityClassName is the PriorityClass name that identifies protected pods.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"gpuResourceName": {
+						SchemaProps: spec.SchemaProps{
+							Description: "GPUResourceName is the scalar resource used for GPU accounting.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"namespaceGuarantees": {
+						VendorExtensible: spec.VendorExtensible{
+							Extensions: spec.Extensions{
+								"x-kubernetes-map-type": "granular",
+							},
+						},
+						SchemaProps: spec.SchemaProps{
+							Description: "NamespaceGuarantees maps namespace to the maximum number of concurrently assigned protected GPUs allowed for that namespace.",
+							Type:        []string{"object"},
+							AdditionalProperties: &spec.SchemaOrBool{
+								Allows: true,
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: 0,
+										Type:    []string{"integer"},
+										Format:  "int64",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 }
 

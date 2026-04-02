@@ -36,6 +36,9 @@ func RegisterDefaults(scheme *runtime.Scheme) error {
 	scheme.AddTypeDefaultingFunc(&configv1.KubeSchedulerConfiguration{}, func(obj interface{}) {
 		SetObjectDefaults_KubeSchedulerConfiguration(obj.(*configv1.KubeSchedulerConfiguration))
 	})
+	scheme.AddTypeDefaultingFunc(&configv1.NamespaceResourceGuaranteeArgs{}, func(obj interface{}) {
+		SetObjectDefaults_NamespaceResourceGuaranteeArgs(obj.(*configv1.NamespaceResourceGuaranteeArgs))
+	})
 	scheme.AddTypeDefaultingFunc(&configv1.NodeResourcesBalancedAllocationArgs{}, func(obj interface{}) {
 		SetObjectDefaults_NodeResourcesBalancedAllocationArgs(obj.(*configv1.NodeResourcesBalancedAllocationArgs))
 	})
@@ -59,6 +62,10 @@ func SetObjectDefaults_InterPodAffinityArgs(in *configv1.InterPodAffinityArgs) {
 
 func SetObjectDefaults_KubeSchedulerConfiguration(in *configv1.KubeSchedulerConfiguration) {
 	SetDefaults_KubeSchedulerConfiguration(in)
+}
+
+func SetObjectDefaults_NamespaceResourceGuaranteeArgs(in *configv1.NamespaceResourceGuaranteeArgs) {
+	SetDefaults_NamespaceResourceGuaranteeArgs(in)
 }
 
 func SetObjectDefaults_NodeResourcesBalancedAllocationArgs(in *configv1.NodeResourcesBalancedAllocationArgs) {
