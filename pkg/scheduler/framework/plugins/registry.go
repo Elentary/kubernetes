@@ -25,6 +25,7 @@ import (
 	plfeature "k8s.io/kubernetes/pkg/scheduler/framework/plugins/feature"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/imagelocality"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/interpodaffinity"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/namespaceresourceguarantee"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodeaffinity"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodename"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodeports"
@@ -83,6 +84,7 @@ func NewInTreeRegistry() runtime.Registry {
 		defaultbinder.Name:                   defaultbinder.New,
 		defaultpreemption.Name:               runtime.FactoryAdapter(fts, defaultpreemption.New),
 		schedulinggates.Name:                 runtime.FactoryAdapter(fts, schedulinggates.New),
+		namespaceresourceguarantee.Name:      namespaceresourceguarantee.New,
 	}
 
 	return registry

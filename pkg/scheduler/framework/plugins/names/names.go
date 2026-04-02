@@ -32,6 +32,7 @@ const (
 	NodeVolumeLimits                = "NodeVolumeLimits"
 	PodTopologySpread               = "PodTopologySpread"
 	SchedulingGates                 = "SchedulingGates"
+	NamespaceResourceGuarantee      = "NamespaceResourceGuarantee"
 	TaintToleration                 = "TaintToleration"
 	VolumeBinding                   = "VolumeBinding"
 	VolumeRestrictions              = "VolumeRestrictions"

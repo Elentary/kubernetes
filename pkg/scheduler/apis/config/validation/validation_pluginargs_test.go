@@ -167,6 +167,84 @@ func TestValidateInterPodAffinityArgs(t *testing.T) {
 	}
 }
 
+func TestValidateNamespaceResourceGuaranteeArgs(t *testing.T) {
+	cases := map[string]struct {
+		args     config.NamespaceResourceGuaranteeArgs
+		wantErrs field.ErrorList
+	}{
+		"valid args": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName: "protected",
+				GPUResourceName:            "nvidia.com/gpu",
+				NamespaceGuarantees: map[string]int64{
+					"team-a": 4,
+				},
+			},
+		},
+		"missing protected priority class": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				GPUResourceName: "nvidia.com/gpu",
+			},
+			wantErrs: field.ErrorList{
+				&field.Error{
+					Type:  field.ErrorTypeRequired,
+					Field: "protectedPriorityClassName",
+				},
+			},
+		},
+		"missing gpu resource name": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName: "protected",
+			},
+			wantErrs: field.ErrorList{
+				&field.Error{
+					Type:  field.ErrorTypeRequired,
+					Field: "gpuResourceName",
+				},
+			},
+		},
+		"negative guarantee": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName: "protected",
+				GPUResourceName:            "nvidia.com/gpu",
+				NamespaceGuarantees: map[string]int64{
+					"team-a": -1,
+				},
+			},
+			wantErrs: field.ErrorList{
+				&field.Error{
+					Type:  field.ErrorTypeInvalid,
+					Field: "namespaceGuarantees[team-a]",
+				},
+			},
+		},
+		"empty namespace": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName: "protected",
+				GPUResourceName:            "nvidia.com/gpu",
+				NamespaceGuarantees: map[string]int64{
+					"": 1,
+				},
+			},
+			wantErrs: field.ErrorList{
+				&field.Error{
+					Type:  field.ErrorTypeInvalid,
+					Field: "namespaceGuarantees[]",
+				},
+			},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := ValidateNamespaceResourceGuaranteeArgs(nil, &tc.args)
+			if diff := cmp.Diff(tc.wantErrs.ToAggregate(), err, ignoreBadValueDetail); diff != "" {
+				t.Errorf("ValidateNamespaceResourceGuaranteeArgs returned err (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestValidatePodTopologySpreadArgs(t *testing.T) {
 	cases := map[string]struct {
 		args     *config.PodTopologySpreadArgs

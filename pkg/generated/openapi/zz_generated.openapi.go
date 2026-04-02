@@ -1293,6 +1293,7 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		"k8s.io/kube-scheduler/config/v1.InterPodAffinityArgs":                                                  schema_k8sio_kube_scheduler_config_v1_InterPodAffinityArgs(ref),
 		"k8s.io/kube-scheduler/config/v1.KubeSchedulerConfiguration":                                            schema_k8sio_kube_scheduler_config_v1_KubeSchedulerConfiguration(ref),
 		"k8s.io/kube-scheduler/config/v1.KubeSchedulerProfile":                                                  schema_k8sio_kube_scheduler_config_v1_KubeSchedulerProfile(ref),
+		"k8s.io/kube-scheduler/config/v1.NamespaceResourceGuaranteeArgs":                                        schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref),
 		"k8s.io/kube-scheduler/config/v1.NodeAffinityArgs":                                                      schema_k8sio_kube_scheduler_config_v1_NodeAffinityArgs(ref),
 		"k8s.io/kube-scheduler/config/v1.NodeResourcesBalancedAllocationArgs":                                   schema_k8sio_kube_scheduler_config_v1_NodeResourcesBalancedAllocationArgs(ref),
 		"k8s.io/kube-scheduler/config/v1.NodeResourcesFitArgs":                                                  schema_k8sio_kube_scheduler_config_v1_NodeResourcesFitArgs(ref),
@@ -66431,6 +66432,68 @@ func schema_k8sio_kube_scheduler_config_v1_KubeSchedulerProfile(ref common.Refer
 		},
 		Dependencies: []string{
 			"k8s.io/kube-scheduler/config/v1.PluginConfig", "k8s.io/kube-scheduler/config/v1.Plugins"},
+	}
+}
+
+func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "NamespaceResourceGuaranteeArgs holds arguments used to configure the NamespaceResourceGuarantee plugin.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"apiVersion": {
+						SchemaProps: spec.SchemaProps{
+							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"protectedPriorityClassName": {
+						SchemaProps: spec.SchemaProps{
+							Description: "ProtectedPriorityClassName is the PriorityClass name that identifies protected pods.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"gpuResourceName": {
+						SchemaProps: spec.SchemaProps{
+							Description: "GPUResourceName is the scalar resource used for GPU accounting.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"namespaceGuarantees": {
+						VendorExtensible: spec.VendorExtensible{
+							Extensions: spec.Extensions{
+								"x-kubernetes-map-type": "granular",
+							},
+						},
+						SchemaProps: spec.SchemaProps{
+							Description: "NamespaceGuarantees maps namespace to the maximum number of concurrently assigned protected GPUs allowed for that namespace.",
+							Type:        []string{"object"},
+							AdditionalProperties: &spec.SchemaOrBool{
+								Allows: true,
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: 0,
+										Type:    []string{"integer"},
+										Format:  "int64",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 }
 
