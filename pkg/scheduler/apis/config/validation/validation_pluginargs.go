@@ -327,3 +327,26 @@ func ValidateNodeResourcesFitArgs(path *field.Path, args *config.NodeResourcesFi
 	}
 	return allErrs.ToAggregate()
 }
+
+// ValidateNamespaceResourceGuaranteeArgs validates that NamespaceResourceGuaranteeArgs are correct.
+func ValidateNamespaceResourceGuaranteeArgs(path *field.Path, args *config.NamespaceResourceGuaranteeArgs) error {
+	var allErrs field.ErrorList
+	if len(args.ProtectedPriorityClassName) == 0 {
+		allErrs = append(allErrs, field.Required(path.Child("protectedPriorityClassName"), "must not be empty"))
+	}
+	if len(args.GPUResourceName) == 0 {
+		allErrs = append(allErrs, field.Required(path.Child("gpuResourceName"), "must not be empty"))
+	}
+
+	guaranteesPath := path.Child("namespaceGuarantees")
+	for namespace, guarantee := range args.NamespaceGuarantees {
+		if len(namespace) == 0 {
+			allErrs = append(allErrs, field.Invalid(guaranteesPath.Key(namespace), namespace, "namespace must not be empty"))
+		}
+		if guarantee < 0 {
+			allErrs = append(allErrs, field.Invalid(guaranteesPath.Key(namespace), guarantee, "must be non-negative"))
+		}
+	}
+
+	return allErrs.ToAggregate()
+}

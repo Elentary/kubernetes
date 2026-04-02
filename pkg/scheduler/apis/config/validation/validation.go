@@ -155,6 +155,7 @@ func validatePluginConfig(path *field.Path, apiVersion string, profile *config.K
 		"NodeResourcesBalancedAllocation": ValidateNodeResourcesBalancedAllocationArgs,
 		"NodeResourcesFitArgs":            ValidateNodeResourcesFitArgs,
 		"PodTopologySpread":               ValidatePodTopologySpreadArgs,
+		"NamespaceResourceGuarantee":      ValidateNamespaceResourceGuaranteeArgs,
 		"VolumeBinding":                   ValidateVolumeBindingArgs,
 	}
 
