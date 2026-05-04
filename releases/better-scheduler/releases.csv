@@ -1,1 +1,2 @@
 release_tag,git_sha,image,image_digest,released_at_utc,released_by
+v1.32.4-bs-v0.1,57d4142defc,767397673936.dkr.ecr.us-east-2.amazonaws.com/better-scheduler:v1.32.4-bs-v0.1,767397673936.dkr.ecr.us-east-2.amazonaws.com/better-scheduler@sha256:bb2b77c39dbe2f59ae73db6bd478a4bc76e77a169f20a65f10a529e40e2841be,2026-04-06T13:06:30Z,vscode

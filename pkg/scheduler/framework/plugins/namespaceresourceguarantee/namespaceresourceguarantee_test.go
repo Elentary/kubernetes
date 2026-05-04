@@ -44,64 +44,120 @@ func TestPreFilter(t *testing.T) {
 		wantMessage  string
 	}{
 		{
-			name: "protected pod within guarantee passes",
-			args: newArgs(map[string]int64{"team-a": 4}),
-			pod:  makeGPUPod("incoming", "team-a", "protected", "", 2),
+			name: "protected pod within cpu and memory guarantees passes",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {
+					v1.ResourceCPU:    resource.MustParse("4"),
+					v1.ResourceMemory: resource.MustParse("16Gi"),
+				},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU:    "1",
+				v1.ResourceMemory: "1Gi",
+			}),
 			existingPods: []*v1.Pod{
-				makeGPUPod("running", "team-a", "protected", "node-a", 2),
+				makePodWithRequests("running", "team-a", "protected", "node-a", map[v1.ResourceName]string{
+					v1.ResourceCPU:    "2",
+					v1.ResourceMemory: "4Gi",
+				}),
 			},
-			nodes:    []*v1.Node{makeGPUNode("node-a", 8)},
+			nodes:    []*v1.Node{makeNode("node-a")},
 			wantCode: framework.Success,
 		},
 		{
-			name: "protected pod exceeding guarantee fails",
-			args: newArgs(map[string]int64{"team-a": 3}),
-			pod:  makeGPUPod("incoming", "team-a", "protected", "", 2),
+			name: "protected pod exceeding cpu guarantee fails",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {
+					v1.ResourceCPU: resource.MustParse("4"),
+				},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1500m",
+			}),
 			existingPods: []*v1.Pod{
-				makeGPUPod("running", "team-a", "protected", "node-a", 2),
+				makePodWithRequests("running", "team-a", "protected", "node-a", map[v1.ResourceName]string{
+					v1.ResourceCPU: "3",
+				}),
 			},
-			nodes:       []*v1.Node{makeGPUNode("node-a", 8)},
+			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" protected GPU guarantee exceeded: guarantee=3 current=2 requested=2`,
+			wantMessage: `namespace "team-a" protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=3000 requested=1500`,
 		},
 		{
 			name: "missing namespace guarantee defaults to zero",
-			args: newArgs(map[string]int64{"team-b": 4}),
-			pod:  makeGPUPod("incoming", "team-a", "protected", "", 1),
-			nodes: []*v1.Node{
-				makeGPUNode("node-a", 8),
-			},
+			args: newArgs(map[string]v1.ResourceList{
+				"team-b": {
+					v1.ResourceCPU: resource.MustParse("1"),
+				},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "100m",
+			}),
+			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" protected GPU guarantee exceeded: guarantee=0 current=0 requested=1`,
+			wantMessage: `namespace "team-a" protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
 		},
 		{
 			name: "normal pod bypasses plugin",
-			args: newArgs(map[string]int64{"team-a": 0}),
-			pod:  makeGPUPod("incoming", "team-a", "normal", "", 8),
-			nodes: []*v1.Node{
-				makeGPUNode("node-a", 8),
-			},
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {
+					v1.ResourceCPU: resource.MustParse("0"),
+				},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "normal", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "8",
+			}),
+			nodes:    []*v1.Node{makeNode("node-a")},
 			wantCode: framework.Success,
 		},
 		{
-			name: "protected cpu only pod bypasses cap accounting",
-			args: newArgs(map[string]int64{"team-a": 0}),
-			pod:  makeCPUPod("incoming", "team-a", "protected"),
-			nodes: []*v1.Node{
-				makeGPUNode("node-a", 8),
-			},
+			name: "protected pod requesting non-configured resource bypasses cap accounting",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {
+					v1.ResourceCPU: resource.MustParse("1"),
+				},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceName("nvidia.com/gpu"): "8",
+			}),
+			nodes:    []*v1.Node{makeNode("node-a")},
 			wantCode: framework.Success,
 		},
 		{
-			name: "only same namespace protected gpu pods are counted",
-			args: newArgs(map[string]int64{"team-a": 2}),
-			pod:  makeGPUPod("incoming", "team-a", "protected", "", 1),
+			name: "only same namespace protected pods are counted",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {
+					v1.ResourceCPU: resource.MustParse("2"),
+				},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}),
 			existingPods: []*v1.Pod{
-				makeGPUPod("other-ns", "team-b", "protected", "node-a", 8),
-				makeGPUPod("normal", "team-a", "normal", "node-a", 8),
+				makePodWithRequests("other-ns", "team-b", "protected", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "8"}),
+				makePodWithRequests("normal", "team-a", "normal", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "8"}),
 			},
-			nodes:    []*v1.Node{makeGPUNode("node-a", 8)},
+			nodes:    []*v1.Node{makeNode("node-a")},
 			wantCode: framework.Success,
+		},
+		{
+			name: "protected pod exceeding gpu guarantee fails",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {
+					v1.ResourceName("nvidia.com/gpu"): resource.MustParse("3"),
+				},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceName("nvidia.com/gpu"): "2",
+			}),
+			existingPods: []*v1.Pod{
+				makePodWithRequests("running", "team-a", "protected", "node-a", map[v1.ResourceName]string{
+					v1.ResourceName("nvidia.com/gpu"): "2",
+				}),
+			},
+			nodes:       []*v1.Node{makeNode("node-a")},
+			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantMessage: `namespace "team-a" protected resource guarantee exceeded: resource="nvidia.com/gpu" guarantee=3 current=2 requested=2`,
 		},
 	}
 
@@ -154,40 +210,79 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 		expectErr    bool
 	}{
 		{
-			name:         "same namespace protected gpu pod deleted",
-			targetPod:    makeGPUPod("incoming", "team-a", "protected", "", 1),
-			oldObj:       makeGPUPod("running", "team-a", "protected", "node-a", 2),
+			name: "same namespace protected cpu pod deleted",
+			targetPod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}),
+			oldObj: makePodWithRequests("running", "team-a", "protected", "node-a", map[v1.ResourceName]string{
+				v1.ResourceCPU: "2",
+			}),
 			expectedHint: framework.Queue,
 		},
 		{
-			name:         "other namespace protected gpu pod deleted",
-			targetPod:    makeGPUPod("incoming", "team-a", "protected", "", 1),
-			oldObj:       makeGPUPod("running", "team-b", "protected", "node-a", 2),
+			name: "other namespace protected cpu pod deleted",
+			targetPod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}),
+			oldObj: makePodWithRequests("running", "team-b", "protected", "node-a", map[v1.ResourceName]string{
+				v1.ResourceCPU: "2",
+			}),
 			expectedHint: framework.QueueSkip,
 		},
 		{
-			name:         "same namespace normal pod deleted",
-			targetPod:    makeGPUPod("incoming", "team-a", "protected", "", 1),
-			oldObj:       makeGPUPod("running", "team-a", "normal", "node-a", 2),
+			name: "same namespace normal pod deleted",
+			targetPod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}),
+			oldObj: makePodWithRequests("running", "team-a", "normal", "node-a", map[v1.ResourceName]string{
+				v1.ResourceCPU: "2",
+			}),
 			expectedHint: framework.QueueSkip,
 		},
 		{
-			name:         "target pod scaled down",
-			targetPod:    makeGPUPod("incoming", "team-a", "protected", "", 2),
-			oldObj:       makeGPUPodWithUID("incoming", "team-a", "protected", "", 2, "incoming-uid"),
-			newObj:       makeGPUPodWithUID("incoming", "team-a", "protected", "", 1, "incoming-uid"),
+			name: "target pod scaled down memory",
+			targetPod: makePodWithRequestsAndUID("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceMemory: "2Gi",
+			}, "incoming-uid"),
+			oldObj: makePodWithRequestsAndUID("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceMemory: "2Gi",
+			}, "incoming-uid"),
+			newObj: makePodWithRequestsAndUID("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceMemory: "1Gi",
+			}, "incoming-uid"),
 			expectedHint: framework.Queue,
+		},
+		{
+			name: "target pod update with same requests",
+			targetPod: makePodWithRequestsAndUID("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}, "incoming-uid"),
+			oldObj: makePodWithRequestsAndUID("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}, "incoming-uid"),
+			newObj: makePodWithRequestsAndUID("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}, "incoming-uid"),
+			expectedHint: framework.QueueSkip,
 		},
 		{
 			name:         "wrong object type returns error and queues",
-			targetPod:    makeGPUPod("incoming", "team-a", "protected", "", 1),
+			targetPod:    makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
 			oldObj:       "not-a-pod",
 			expectedHint: framework.Queue,
 			expectErr:    true,
 		},
 	}
 
-	pl := &NamespaceResourceGuarantee{args: newArgs(map[string]int64{"team-a": 1})}
+	pl := &NamespaceResourceGuarantee{
+		args: newArgs(map[string]v1.ResourceList{
+			"team-a": {
+				v1.ResourceCPU:    resource.MustParse("1"),
+				v1.ResourceMemory: resource.MustParse("2Gi"),
+			},
+		}),
+		configuredResource: []v1.ResourceName{v1.ResourceCPU, v1.ResourceMemory},
+	}
 	logger, _ := ktesting.NewTestContext(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -202,38 +297,37 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 	}
 }
 
-func newArgs(guarantees map[string]int64) config.NamespaceResourceGuaranteeArgs {
+func newArgs(guarantees map[string]v1.ResourceList) config.NamespaceResourceGuaranteeArgs {
 	return config.NamespaceResourceGuaranteeArgs{
 		ProtectedPriorityClassName: "protected",
-		GPUResourceName:            "nvidia.com/gpu",
 		NamespaceGuarantees:        guarantees,
 	}
 }
 
-func makeGPUNode(name string, gpu int64) *v1.Node {
+func makeNode(name string) *v1.Node {
 	return &v1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Status: v1.NodeStatus{
 			Allocatable: v1.ResourceList{
-				v1.ResourceName("nvidia.com/gpu"): *resource.NewQuantity(gpu, resource.DecimalSI),
+				v1.ResourceCPU:                    resource.MustParse("128"),
+				v1.ResourceMemory:                 resource.MustParse("1Ti"),
+				v1.ResourceName("nvidia.com/gpu"): resource.MustParse("16"),
 			},
 		},
 	}
 }
 
-func makeGPUPod(name, namespace, priorityClassName, nodeName string, gpu int64) *v1.Pod {
-	return makeGPUPodWithUID(name, namespace, priorityClassName, nodeName, gpu, name+"-uid")
+func makePodWithRequests(name, namespace, priorityClassName, nodeName string, requests map[v1.ResourceName]string) *v1.Pod {
+	return makePodWithRequestsAndUID(name, namespace, priorityClassName, nodeName, requests, name+"-uid")
 }
 
-func makeGPUPodWithUID(name, namespace, priorityClassName, nodeName string, gpu int64, uid string) *v1.Pod {
-	resources := v1.ResourceRequirements{}
-	if gpu > 0 {
-		resources.Requests = v1.ResourceList{
-			v1.ResourceName("nvidia.com/gpu"): *resource.NewQuantity(gpu, resource.DecimalSI),
-		}
-		resources.Limits = v1.ResourceList{
-			v1.ResourceName("nvidia.com/gpu"): *resource.NewQuantity(gpu, resource.DecimalSI),
-		}
+func makePodWithRequestsAndUID(name, namespace, priorityClassName, nodeName string, requests map[v1.ResourceName]string, uid string) *v1.Pod {
+	resourceRequests := make(v1.ResourceList, len(requests))
+	resourceLimits := make(v1.ResourceList, len(requests))
+	for resourceName, quantity := range requests {
+		parsed := resource.MustParse(quantity)
+		resourceRequests[resourceName] = parsed
+		resourceLimits[resourceName] = parsed
 	}
 
 	return &v1.Pod{
@@ -247,28 +341,11 @@ func makeGPUPodWithUID(name, namespace, priorityClassName, nodeName string, gpu 
 			PriorityClassName: priorityClassName,
 			Containers: []v1.Container{
 				{
-					Name:      "c",
-					Image:     "pause",
-					Resources: resources,
-				},
-			},
-		},
-	}
-}
-
-func makeCPUPod(name, namespace, priorityClassName string) *v1.Pod {
-	return &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec: v1.PodSpec{
-			PriorityClassName: priorityClassName,
-			Containers: []v1.Container{
-				{
 					Name:  "c",
 					Image: "pause",
 					Resources: v1.ResourceRequirements{
-						Requests: v1.ResourceList{
-							v1.ResourceCPU: *resource.NewMilliQuantity(500, resource.DecimalSI),
-						},
+						Requests: resourceRequests,
+						Limits:   resourceLimits,
 					},
 				},
 			},

@@ -193,12 +193,9 @@ type NamespaceResourceGuaranteeArgs struct {
 	// protected pods.
 	ProtectedPriorityClassName string
 
-	// GPUResourceName is the scalar resource used for GPU accounting.
-	GPUResourceName string
-
-	// NamespaceGuarantees maps namespace to the maximum number of concurrently
-	// assigned protected GPUs allowed for that namespace.
-	NamespaceGuarantees map[string]int64
+	// NamespaceGuarantees maps namespace to per-resource protected guarantees.
+	// Supported resources are cpu, memory, and extended scalar resources.
+	NamespaceGuarantees map[string]v1.ResourceList
 }
 
 // ScoringStrategyType the type of scoring strategy used in NodeResourcesFit plugin.
