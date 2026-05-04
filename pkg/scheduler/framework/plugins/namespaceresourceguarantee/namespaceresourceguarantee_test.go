@@ -297,6 +297,96 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 	}
 }
 
+func TestCompareNamespaceForEviction(t *testing.T) {
+	deficits := []resourceDeficit{
+		{resourceName: v1.ResourceCPU, deficit: 4000, request: 8000},
+		{resourceName: v1.ResourceMemory, deficit: 8 << 30, request: 16 << 30},
+	}
+
+	t.Run("higher usage on most deficient resource is less important", func(t *testing.T) {
+		usage := map[string]map[v1.ResourceName]int64{
+			"team-a": {v1.ResourceCPU: 2000, v1.ResourceMemory: 12 << 30},
+			"team-b": {v1.ResourceCPU: 4000, v1.ResourceMemory: 1 << 30},
+		}
+		got, ok := compareNamespaceForEviction("team-a", "team-b", "team-c", deficits, usage)
+		if !ok {
+			t.Fatalf("expected namespace comparison to apply")
+		}
+		if got != -1 {
+			t.Fatalf("unexpected compare result: got %d, want -1", got)
+		}
+	})
+
+	t.Run("equal usage prefers evicting preemptor namespace", func(t *testing.T) {
+		usage := map[string]map[v1.ResourceName]int64{
+			"team-a": {v1.ResourceCPU: 2000, v1.ResourceMemory: 4 << 30},
+			"team-b": {v1.ResourceCPU: 2000, v1.ResourceMemory: 4 << 30},
+		}
+		got, ok := compareNamespaceForEviction("team-a", "team-b", "team-a", deficits, usage)
+		if !ok {
+			t.Fatalf("expected namespace comparison to apply")
+		}
+		if got != 1 {
+			t.Fatalf("unexpected compare result: got %d, want 1", got)
+		}
+	})
+
+	t.Run("unlisted namespace uses default tie-break", func(t *testing.T) {
+		usage := map[string]map[v1.ResourceName]int64{
+			"team-a": {v1.ResourceCPU: 1},
+		}
+		_, ok := compareNamespaceForEviction("team-a", "team-x", "team-a", deficits, usage)
+		if ok {
+			t.Fatalf("expected namespace comparison to be skipped for unlisted namespace")
+		}
+	})
+}
+
+func TestOrderedDeficientResources(t *testing.T) {
+	node := makeNode("node-a")
+	node.Status.Allocatable = v1.ResourceList{
+		v1.ResourceCPU:                    resource.MustParse("10"),
+		v1.ResourceMemory:                 resource.MustParse("20Gi"),
+		v1.ResourceName("nvidia.com/gpu"): resource.MustParse("4"),
+	}
+	existing := []*v1.Pod{
+		makePodWithRequests("running", "team-a", "normal", "node-a", map[v1.ResourceName]string{
+			v1.ResourceCPU:                    "4",
+			v1.ResourceMemory:                 "10Gi",
+			v1.ResourceName("nvidia.com/gpu"): "3",
+		}),
+	}
+	nodeInfo := framework.NewNodeInfo(existing...)
+	nodeInfo.SetNode(node)
+
+	incoming := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+		v1.ResourceCPU:                    "8",
+		v1.ResourceMemory:                 "16Gi",
+		v1.ResourceName("nvidia.com/gpu"): "2",
+	})
+
+	pl := &NamespaceResourceGuarantee{
+		configuredResource: []v1.ResourceName{
+			v1.ResourceCPU,
+			v1.ResourceMemory,
+			v1.ResourceName("nvidia.com/gpu"),
+		},
+	}
+	got := pl.orderedDeficientResources(nodeInfo, incoming)
+	gotNames := make([]v1.ResourceName, 0, len(got))
+	for _, deficit := range got {
+		gotNames = append(gotNames, deficit.resourceName)
+	}
+	want := []v1.ResourceName{
+		v1.ResourceName("nvidia.com/gpu"),
+		v1.ResourceMemory,
+		v1.ResourceCPU,
+	}
+	if diff := cmp.Diff(want, gotNames); diff != "" {
+		t.Fatalf("unexpected deficient resource order (-want,+got):\n%s", diff)
+	}
+}
+
 func newArgs(guarantees map[string]v1.ResourceList) config.NamespaceResourceGuaranteeArgs {
 	return config.NamespaceResourceGuaranteeArgs{
 		ProtectedPriorityClassName: "protected",
