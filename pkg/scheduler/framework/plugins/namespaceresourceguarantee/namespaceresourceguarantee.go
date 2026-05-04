@@ -19,8 +19,10 @@ package namespaceresourceguarantee
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	resourcehelper "k8s.io/component-helpers/resource"
@@ -38,10 +40,11 @@ const (
 	Name = names.NamespaceResourceGuarantee
 )
 
-// NamespaceResourceGuarantee enforces per-namespace protected GPU guarantees.
+// NamespaceResourceGuarantee enforces per-namespace protected resource guarantees.
 type NamespaceResourceGuarantee struct {
-	handle framework.Handle
-	args   config.NamespaceResourceGuaranteeArgs
+	handle             framework.Handle
+	args               config.NamespaceResourceGuaranteeArgs
+	configuredResource []v1.ResourceName
 }
 
 var _ framework.PreFilterPlugin = &NamespaceResourceGuarantee{}
@@ -63,39 +66,48 @@ func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framew
 	}
 
 	return &NamespaceResourceGuarantee{
-		handle: handle,
-		args:   *args,
+		handle:             handle,
+		args:               *args,
+		configuredResource: configuredResources(args.NamespaceGuarantees),
 	}, nil
 }
 
-// PreFilter checks whether a protected GPU pod would exceed its namespace guarantee.
+// PreFilter checks whether a protected pod would exceed any namespace resource guarantee.
 func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
-	if !pl.isProtectedPod(pod) {
+	if !pl.isProtectedPod(pod) || len(pl.configuredResource) == 0 {
 		return nil, nil
 	}
 
-	requested := pl.protectedGPURequest(pod)
-	if requested == 0 {
+	requested := pl.protectedPodRequests(pod)
+	if len(requested) == 0 {
 		return nil, nil
 	}
 
-	currentUsage, err := pl.namespaceProtectedGPUUsage(pod.Namespace)
+	currentUsage, err := pl.namespaceProtectedUsage(pod.Namespace)
 	if err != nil {
 		return nil, framework.AsStatus(err)
 	}
 
-	guarantee := pl.args.NamespaceGuarantees[pod.Namespace]
-	if currentUsage+requested > guarantee {
-		return nil, framework.NewStatus(
-			framework.UnschedulableAndUnresolvable,
-			fmt.Sprintf(
-				"namespace %q protected GPU guarantee exceeded: guarantee=%d current=%d requested=%d",
-				pod.Namespace,
-				guarantee,
-				currentUsage,
-				requested,
-			),
-		)
+	for _, resourceName := range pl.configuredResource {
+		resourceRequested := requested[resourceName]
+		if resourceRequested == 0 {
+			continue
+		}
+		resourceUsage := currentUsage[resourceName]
+		resourceGuarantee := pl.namespaceGuaranteeValue(pod.Namespace, resourceName)
+		if resourceUsage+resourceRequested > resourceGuarantee {
+			return nil, framework.NewStatus(
+				framework.UnschedulableAndUnresolvable,
+				fmt.Sprintf(
+					"namespace %q protected resource guarantee exceeded: resource=%q guarantee=%d current=%d requested=%d",
+					pod.Namespace,
+					resourceName,
+					resourceGuarantee,
+					resourceUsage,
+					resourceRequested,
+				),
+			)
+		}
 	}
 
 	return nil, nil
@@ -106,7 +118,7 @@ func (pl *NamespaceResourceGuarantee) PreFilterExtensions() framework.PreFilterE
 	return nil
 }
 
-// EventsToRegister returns the pod events that can reduce protected GPU usage.
+// EventsToRegister returns the pod events that can reduce protected namespace resource usage.
 func (pl *NamespaceResourceGuarantee) EventsToRegister(_ context.Context) ([]framework.ClusterEventWithHint, error) {
 	return []framework.ClusterEventWithHint{
 		{
@@ -124,70 +136,107 @@ func (pl *NamespaceResourceGuarantee) isSchedulableAfterPodChange(logger klog.Lo
 
 	// The unschedulable pod itself may become schedulable when it scales down.
 	if modifiedPod != nil && modifiedPod.UID == pod.UID {
-		if pl.protectedGPURequest(modifiedPod) < pl.protectedGPURequest(originalPod) {
-			logger.V(5).Info("protected pod scaled down and may now fit under the namespace GPU guarantee", "pod", klog.KObj(pod))
+		if pl.requestDecreased(originalPod, modifiedPod) {
+			logger.V(5).Info("protected pod scaled down and may now fit under the namespace resource guarantee", "pod", klog.KObj(pod))
 			return framework.Queue, nil
 		}
-		logger.V(5).Info("protected pod update did not reduce its GPU request", "pod", klog.KObj(pod))
+		logger.V(5).Info("protected pod update did not reduce its relevant resource request", "pod", klog.KObj(pod))
 		return framework.QueueSkip, nil
 	}
 
-	if pl.scheduledProtectedGPURequest(originalPod, pod.Namespace) > pl.scheduledProtectedGPURequest(modifiedPod, pod.Namespace) {
-		logger.V(5).Info("namespace protected GPU usage decreased and may unblock scheduling", "pod", klog.KObj(pod))
+	if pl.namespaceUsageDecreased(originalPod, modifiedPod, pod.Namespace) {
+		logger.V(5).Info("namespace protected resource usage decreased and may unblock scheduling", "pod", klog.KObj(pod))
 		return framework.Queue, nil
 	}
 
-	logger.V(5).Info("pod change did not reduce relevant namespace protected GPU usage", "pod", klog.KObj(pod))
+	logger.V(5).Info("pod change did not reduce relevant namespace protected resource usage", "pod", klog.KObj(pod))
 	return framework.QueueSkip, nil
 }
 
-func (pl *NamespaceResourceGuarantee) namespaceProtectedGPUUsage(namespace string) (int64, error) {
+func (pl *NamespaceResourceGuarantee) namespaceProtectedUsage(namespace string) (map[v1.ResourceName]int64, error) {
+	usage := make(map[v1.ResourceName]int64, len(pl.configuredResource))
+	for _, resourceName := range pl.configuredResource {
+		usage[resourceName] = 0
+	}
+
 	sharedLister := pl.handle.SnapshotSharedLister()
 	if sharedLister == nil {
-		return 0, fmt.Errorf("snapshot shared lister is not available")
+		return nil, fmt.Errorf("snapshot shared lister is not available")
 	}
 
 	nodeInfos, err := sharedLister.NodeInfos().List()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	var usage int64
-	resourceName := v1.ResourceName(pl.args.GPUResourceName)
 	for _, nodeInfo := range nodeInfos {
-		if nodeInfo == nil || nodeInfo.Node() == nil || nodeInfo.Allocatable == nil {
+		if nodeInfo == nil {
 			continue
 		}
-		if nodeInfo.Allocatable.ScalarResources[resourceName] == 0 {
-			continue
-		}
+
 		for _, podInfo := range nodeInfo.Pods {
-			usage += pl.scheduledProtectedGPURequest(podInfo.Pod, namespace)
+			for _, resourceName := range pl.configuredResource {
+				usage[resourceName] += pl.scheduledProtectedResourceRequest(podInfo.Pod, namespace, resourceName)
+			}
 		}
 	}
 
 	return usage, nil
 }
 
-func (pl *NamespaceResourceGuarantee) scheduledProtectedGPURequest(pod *v1.Pod, namespace string) int64 {
+func (pl *NamespaceResourceGuarantee) scheduledProtectedResourceRequest(pod *v1.Pod, namespace string, resourceName v1.ResourceName) int64 {
 	if pod == nil || pod.Spec.NodeName == "" || pod.Namespace != namespace {
 		return 0
 	}
-	return pl.protectedGPURequest(pod)
+	return pl.protectedResourceRequest(pod, resourceName)
 }
 
-func (pl *NamespaceResourceGuarantee) protectedGPURequest(pod *v1.Pod) int64 {
+func (pl *NamespaceResourceGuarantee) protectedResourceRequest(pod *v1.Pod, resourceName v1.ResourceName) int64 {
 	if !pl.isProtectedPod(pod) {
 		return 0
 	}
-	return pl.gpuRequest(pod)
+	return pl.resourceRequest(pod, resourceName)
 }
 
 func (pl *NamespaceResourceGuarantee) isProtectedPod(pod *v1.Pod) bool {
 	return pod != nil && pod.Spec.PriorityClassName == pl.args.ProtectedPriorityClassName
 }
 
-func (pl *NamespaceResourceGuarantee) gpuRequest(pod *v1.Pod) int64 {
+func (pl *NamespaceResourceGuarantee) protectedPodRequests(pod *v1.Pod) map[v1.ResourceName]int64 {
+	requested := make(map[v1.ResourceName]int64, len(pl.configuredResource))
+	for _, resourceName := range pl.configuredResource {
+		value := pl.protectedResourceRequest(pod, resourceName)
+		if value > 0 {
+			requested[resourceName] = value
+		}
+	}
+	return requested
+}
+
+func (pl *NamespaceResourceGuarantee) requestDecreased(originalPod, modifiedPod *v1.Pod) bool {
+	for _, resourceName := range pl.configuredResource {
+		if pl.protectedResourceRequest(modifiedPod, resourceName) < pl.protectedResourceRequest(originalPod, resourceName) {
+			return true
+		}
+	}
+	return false
+}
+
+func (pl *NamespaceResourceGuarantee) namespaceUsageDecreased(originalPod, modifiedPod *v1.Pod, namespace string) bool {
+	for _, resourceName := range pl.configuredResource {
+		if pl.scheduledProtectedResourceRequest(originalPod, namespace, resourceName) > pl.scheduledProtectedResourceRequest(modifiedPod, namespace, resourceName) {
+			return true
+		}
+	}
+	return false
+}
+
+func (pl *NamespaceResourceGuarantee) namespaceGuaranteeValue(namespace string, resourceName v1.ResourceName) int64 {
+	guaranteeByNamespace := pl.args.NamespaceGuarantees[namespace]
+	return quantityValue(guaranteeByNamespace[resourceName], resourceName)
+}
+
+func (pl *NamespaceResourceGuarantee) resourceRequest(pod *v1.Pod, resourceName v1.ResourceName) int64 {
 	if pod == nil {
 		return 0
 	}
@@ -197,6 +246,32 @@ func (pl *NamespaceResourceGuarantee) gpuRequest(pod *v1.Pod) int64 {
 		SkipPodLevelResources: !utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResources),
 	})
 
-	quantity := requests[v1.ResourceName(pl.args.GPUResourceName)]
-	return quantity.Value()
+	return quantityValue(requests[resourceName], resourceName)
+}
+
+func quantityValue(quantity resource.Quantity, resourceName v1.ResourceName) int64 {
+	switch resourceName {
+	case v1.ResourceCPU:
+		return quantity.MilliValue()
+	default:
+		return quantity.Value()
+	}
+}
+
+func configuredResources(namespaceGuarantees map[string]v1.ResourceList) []v1.ResourceName {
+	resourceSet := map[v1.ResourceName]struct{}{}
+	for _, namespaceResources := range namespaceGuarantees {
+		for resourceName := range namespaceResources {
+			resourceSet[resourceName] = struct{}{}
+		}
+	}
+
+	resources := make([]v1.ResourceName, 0, len(resourceSet))
+	for resourceName := range resourceSet {
+		resources = append(resources, resourceName)
+	}
+	sort.Slice(resources, func(i, j int) bool {
+		return resources[i] < resources[j]
+	})
+	return resources
 }

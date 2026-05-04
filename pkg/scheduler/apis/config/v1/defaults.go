@@ -221,9 +221,7 @@ func SetDefaults_NodeResourcesBalancedAllocationArgs(obj *configv1.NodeResources
 }
 
 func SetDefaults_NamespaceResourceGuaranteeArgs(obj *configv1.NamespaceResourceGuaranteeArgs) {
-	if len(obj.GPUResourceName) == 0 {
-		obj.GPUResourceName = "nvidia.com/gpu"
-	}
+	_ = obj
 }
 
 func SetDefaults_PodTopologySpreadArgs(obj *configv1.PodTopologySpreadArgs) {

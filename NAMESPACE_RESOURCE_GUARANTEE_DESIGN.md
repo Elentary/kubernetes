@@ -26,7 +26,7 @@ We intentionally use a **2-tier model** (not 3-tier):
 - `Protected` tier:
   - Urgent workloads only
   - Identified by one protected `PriorityClass`
-  - Hard-capped by per-namespace protected GPU guarantee
+  - Hard-capped by per-namespace protected resource guarantees
   - Can preempt normal pods via native Kubernetes preemption
 - `Normal` tier:
   - Everything else
@@ -51,9 +51,9 @@ Why no borrowed tier:
 At scheduling time, the `NamespaceResourceGuarantee` PreFilter:
 
 1. Checks whether the pod is protected (`priorityClassName == protectedPriorityClassName`).
-2. Computes requested GPU count for configured GPU resource (default `nvidia.com/gpu`).
-3. Computes current protected GPU usage in the pod namespace from scheduler snapshot.
-4. Enforces: `currentUsage + requested <= namespaceGuarantee`.
+2. Computes requested amounts for configured protected resources (`cpu`, `memory`, extended scalar resources such as `nvidia.com/gpu`).
+3. Computes current protected resource usage in the pod namespace from scheduler snapshot.
+4. Enforces each configured resource independently: `currentUsage + requested <= namespaceGuarantee`.
 
 If the check fails:
 
@@ -111,8 +111,6 @@ Scheduler config API wiring:
 - Validation impl/tests:
   - `pkg/scheduler/apis/config/validation/validation_pluginargs.go`
   - `pkg/scheduler/apis/config/validation/validation_pluginargs_test.go`
-- Defaults:
-  - `pkg/scheduler/apis/config/v1/defaults.go` (`gpuResourceName` defaults to `nvidia.com/gpu`)
 
 Generated updates:
 
@@ -122,28 +120,27 @@ Note:
 
 - `build/common.sh` has an unrelated local change and is not part of scheduler design.
 
-## 6. Exact GPU Accounting Rules in Implementation
+## 6. Exact Resource Accounting Rules in Implementation
 
 Current implementation counts only:
 
 - pods with protected `PriorityClassName`
 - pods in the same namespace
 - pods already assigned to a node (`spec.nodeName != ""`)
-- requested amount of configured GPU resource (default `nvidia.com/gpu`)
+- requested amount of configured protected resources
 
 Current implementation ignores:
 
 - non-protected pods
-- protected pods requesting 0 of configured GPU resource
+- protected pods requesting 0 of configured protected resources
 - unscheduled pods
 - pods outside namespace
-- pods on nodes without allocatable configured GPU resource (optimization)
 
 MIG handling:
 
 - Scheduler plugin does not do MIG-specific policy.
 - MIG safety/policy is expected from admission webhook.
-- If `gpuResourceName` remains `nvidia.com/gpu`, MIG-only requests do not count toward this protected cap.
+- If guarantees include `nvidia.com/gpu`, MIG-only requests do not count toward that GPU cap.
 
 ## 7. Enqueue and Requeue Behavior
 
@@ -167,15 +164,14 @@ This keeps pending protected pods reactive without custom watchers/informers.
 Fields:
 
 - `protectedPriorityClassName` (required)
-- `gpuResourceName` (required, defaulted to `nvidia.com/gpu` in v1 defaults if omitted)
-- `namespaceGuarantees` (`map[string]int64`, non-negative values; missing namespace implies guarantee `0`)
+- `namespaceGuarantees` (`map[string]ResourceList` per namespace; missing namespace/resource implies guarantee `0`)
 
 Validation rules:
 
 - protected priority class name must be non-empty
-- gpu resource name must be non-empty
 - namespace keys must be non-empty
-- guarantee values must be `>= 0`
+- resources must be `cpu`, `memory`, or extended scalar resources
+- guarantee quantities must be `>= 0` (extended scalar resources must be integer quantities)
 
 ## 9. Scheduler Profile Pattern
 
@@ -198,10 +194,15 @@ profiles:
           apiVersion: kubescheduler.config.k8s.io/v1
           kind: NamespaceResourceGuaranteeArgs
           protectedPriorityClassName: protected
-          gpuResourceName: nvidia.com/gpu
           namespaceGuarantees:
-            team-a: 32
-            team-b: 24
+            team-a:
+              cpu: "64"
+              memory: "256Gi"
+              nvidia.com/gpu: "32"
+            team-b:
+              cpu: "48"
+              memory: "192Gi"
+              nvidia.com/gpu: "24"
 ```
 
 Pod opt-in:
@@ -218,7 +219,7 @@ Webhook is responsible for:
 
 Scheduler plugin is responsible only for:
 
-- enforcing per-namespace protected GPU guarantee at scheduling time
+- enforcing per-namespace protected resource guarantees at scheduling time
 
 ## 11. Performance and Complexity Position
 
@@ -226,7 +227,7 @@ Current accounting strategy:
 
 - snapshot shared lister scan at scheduling cycle
 - no API calls, in-memory scheduler view
-- optimized by skipping non-GPU nodes and non-relevant pods
+- optimized by scanning only scheduled protected pods in the scheduler snapshot
 
 Given expected scale (about 50 GPU nodes, about 8 GPU pods/node), v1 scan cost is acceptable.
 

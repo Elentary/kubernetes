@@ -25,6 +25,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -177,15 +178,23 @@ func TestValidateNamespaceResourceGuaranteeArgs(t *testing.T) {
 		"valid args": {
 			args: config.NamespaceResourceGuaranteeArgs{
 				ProtectedPriorityClassName: "protected",
-				GPUResourceName:            "nvidia.com/gpu",
-				NamespaceGuarantees: map[string]int64{
-					"team-a": 4,
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"team-a": {
+						v1.ResourceCPU:                       resource.MustParse("4"),
+						v1.ResourceMemory:                    resource.MustParse("16Gi"),
+						v1.ResourceName("nvidia.com/gpu"):    resource.MustParse("2"),
+						v1.ResourceName("example.com/slots"): resource.MustParse("7"),
+					},
 				},
 			},
 		},
 		"missing protected priority class": {
 			args: config.NamespaceResourceGuaranteeArgs{
-				GPUResourceName: "nvidia.com/gpu",
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"team-a": {
+						v1.ResourceCPU: resource.MustParse("1"),
+					},
+				},
 			},
 			wantErrs: field.ErrorList{
 				&field.Error{
@@ -194,44 +203,97 @@ func TestValidateNamespaceResourceGuaranteeArgs(t *testing.T) {
 				},
 			},
 		},
-		"missing gpu resource name": {
+		"empty namespace guarantees": {
 			args: config.NamespaceResourceGuaranteeArgs{
 				ProtectedPriorityClassName: "protected",
+				NamespaceGuarantees:        map[string]v1.ResourceList{},
 			},
 			wantErrs: field.ErrorList{
 				&field.Error{
 					Type:  field.ErrorTypeRequired,
-					Field: "gpuResourceName",
+					Field: "namespaceGuarantees",
 				},
-			},
-		},
-		"negative guarantee": {
-			args: config.NamespaceResourceGuaranteeArgs{
-				ProtectedPriorityClassName: "protected",
-				GPUResourceName:            "nvidia.com/gpu",
-				NamespaceGuarantees: map[string]int64{
-					"team-a": -1,
-				},
-			},
-			wantErrs: field.ErrorList{
 				&field.Error{
-					Type:  field.ErrorTypeInvalid,
-					Field: "namespaceGuarantees[team-a]",
+					Type:  field.ErrorTypeRequired,
+					Field: "namespaceGuarantees",
 				},
 			},
 		},
 		"empty namespace": {
 			args: config.NamespaceResourceGuaranteeArgs{
 				ProtectedPriorityClassName: "protected",
-				GPUResourceName:            "nvidia.com/gpu",
-				NamespaceGuarantees: map[string]int64{
-					"": 1,
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"": {
+						v1.ResourceCPU: resource.MustParse("1"),
+					},
 				},
 			},
 			wantErrs: field.ErrorList{
 				&field.Error{
 					Type:  field.ErrorTypeInvalid,
 					Field: "namespaceGuarantees[]",
+				},
+			},
+		},
+		"negative guarantee": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName: "protected",
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"team-a": {
+						v1.ResourceMemory: resource.MustParse("-1Gi"),
+					},
+				},
+			},
+			wantErrs: field.ErrorList{
+				&field.Error{
+					Type:  field.ErrorTypeInvalid,
+					Field: "namespaceGuarantees[team-a][memory]",
+				},
+			},
+		},
+		"invalid resource name": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName: "protected",
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"team-a": {
+						v1.ResourceName("storage"): resource.MustParse("1Gi"),
+					},
+				},
+			},
+			wantErrs: field.ErrorList{
+				&field.Error{
+					Type:  field.ErrorTypeInvalid,
+					Field: "namespaceGuarantees[team-a][storage]",
+				},
+			},
+		},
+		"fractional scalar resource": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName: "protected",
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"team-a": {
+						v1.ResourceName("nvidia.com/gpu"): resource.MustParse("1500m"),
+					},
+				},
+			},
+			wantErrs: field.ErrorList{
+				&field.Error{
+					Type:  field.ErrorTypeInvalid,
+					Field: "namespaceGuarantees[team-a][nvidia.com/gpu]",
+				},
+			},
+		},
+		"empty namespace resource list": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName: "protected",
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"team-a": {},
+				},
+			},
+			wantErrs: field.ErrorList{
+				&field.Error{
+					Type:  field.ErrorTypeRequired,
+					Field: "namespaceGuarantees",
 				},
 			},
 		},
