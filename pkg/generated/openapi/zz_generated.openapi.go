@@ -68658,13 +68658,6 @@ func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref co
 							Format:      "",
 						},
 					},
-					"gpuResourceName": {
-						SchemaProps: spec.SchemaProps{
-							Description: "GPUResourceName is the scalar resource used for GPU accounting.",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
 					"namespaceGuarantees": {
 						VendorExtensible: spec.VendorExtensible{
 							Extensions: spec.Extensions{
@@ -68672,15 +68665,21 @@ func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref co
 							},
 						},
 						SchemaProps: spec.SchemaProps{
-							Description: "NamespaceGuarantees maps namespace to the maximum number of concurrently assigned protected GPUs allowed for that namespace.",
+							Description: "NamespaceGuarantees maps namespace to per-resource protected guarantees. Supported resources are cpu, memory, and extended scalar resources.",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Allows: true,
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Default: 0,
-										Type:    []string{"integer"},
-										Format:  "int64",
+										Type: []string{"object"},
+										AdditionalProperties: &spec.SchemaOrBool{
+											Allows: true,
+											Schema: &spec.Schema{
+												SchemaProps: spec.SchemaProps{
+													Ref: ref("k8s.io/apimachinery/pkg/api/resource.Quantity"),
+												},
+											},
+										},
 									},
 								},
 							},
@@ -68689,6 +68688,8 @@ func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref co
 				},
 			},
 		},
+		Dependencies: []string{
+			"k8s.io/apimachinery/pkg/api/resource.Quantity"},
 	}
 }
 

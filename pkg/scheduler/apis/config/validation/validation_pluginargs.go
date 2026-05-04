@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
+	corev1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/feature"
@@ -352,19 +353,40 @@ func ValidateNamespaceResourceGuaranteeArgs(path *field.Path, args *config.Names
 	if len(args.ProtectedPriorityClassName) == 0 {
 		allErrs = append(allErrs, field.Required(path.Child("protectedPriorityClassName"), "must not be empty"))
 	}
-	if len(args.GPUResourceName) == 0 {
-		allErrs = append(allErrs, field.Required(path.Child("gpuResourceName"), "must not be empty"))
-	}
 
 	guaranteesPath := path.Child("namespaceGuarantees")
-	for namespace, guarantee := range args.NamespaceGuarantees {
+	if len(args.NamespaceGuarantees) == 0 {
+		allErrs = append(allErrs, field.Required(guaranteesPath, "must not be empty"))
+	}
+
+	totalResources := 0
+	for namespace, namespaceGuarantees := range args.NamespaceGuarantees {
 		if len(namespace) == 0 {
 			allErrs = append(allErrs, field.Invalid(guaranteesPath.Key(namespace), namespace, "namespace must not be empty"))
 		}
-		if guarantee < 0 {
-			allErrs = append(allErrs, field.Invalid(guaranteesPath.Key(namespace), guarantee, "must be non-negative"))
+
+		resourcePath := guaranteesPath.Key(namespace)
+		for resourceName, quantity := range namespaceGuarantees {
+			totalResources++
+			resPath := resourcePath.Key(string(resourceName))
+			if !isAllowedNamespaceGuaranteeResource(resourceName) {
+				allErrs = append(allErrs, field.Invalid(resPath, resourceName, "resource must be cpu, memory, or an extended scalar resource"))
+			}
+			if quantity.Sign() < 0 {
+				allErrs = append(allErrs, field.Invalid(resPath, quantity.String(), "must be non-negative"))
+			}
+			if corev1helper.IsExtendedResourceName(resourceName) && quantity.MilliValue()%1000 != 0 {
+				allErrs = append(allErrs, field.Invalid(resPath, quantity.String(), "must be an integer value for extended scalar resources"))
+			}
 		}
+	}
+	if len(args.NamespaceGuarantees) > 0 && totalResources == 0 {
+		allErrs = append(allErrs, field.Required(guaranteesPath, "must contain at least one resource guarantee"))
 	}
 
 	return allErrs.ToAggregate()
+}
+
+func isAllowedNamespaceGuaranteeResource(resourceName v1.ResourceName) bool {
+	return resourceName == v1.ResourceCPU || resourceName == v1.ResourceMemory || corev1helper.IsExtendedResourceName(resourceName)
 }

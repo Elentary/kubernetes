@@ -24,6 +24,7 @@ package v1
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	resource "k8s.io/apimachinery/pkg/api/resource"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -302,9 +303,19 @@ func (in *NamespaceResourceGuaranteeArgs) DeepCopyInto(out *NamespaceResourceGua
 	out.TypeMeta = in.TypeMeta
 	if in.NamespaceGuarantees != nil {
 		in, out := &in.NamespaceGuarantees, &out.NamespaceGuarantees
-		*out = make(map[string]int64, len(*in))
+		*out = make(map[string]corev1.ResourceList, len(*in))
 		for key, val := range *in {
-			(*out)[key] = val
+			var outVal map[corev1.ResourceName]resource.Quantity
+			if val == nil {
+				(*out)[key] = nil
+			} else {
+				in, out := &val, &outVal
+				*out = make(corev1.ResourceList, len(*in))
+				for key, val := range *in {
+					(*out)[key] = val.DeepCopy()
+				}
+			}
+			(*out)[key] = outVal
 		}
 	}
 	return
