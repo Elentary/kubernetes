@@ -54,6 +54,16 @@ const (
 
 	defaultMinCandidateNodesPercentage int32 = 10
 	defaultMinCandidateNodesAbsolute   int32 = 100
+
+	preemptionWaitingOnTerminatingVictims = "not eligible due to a terminating pod on the nominated node."
+	preemptionNoCandidateMessage          = "no candidate node for preemption"
+	preemptionNotHelpfulFragment          = "Preemption is not helpful for scheduling"
+
+	preemptionStartedReason     = "NamespaceResourceGuaranteePreemptionStarted"
+	preemptionWaitingReason     = "NamespaceResourceGuaranteePreemptionWaiting"
+	preemptionNotHelpfulReason  = "NamespaceResourceGuaranteePreemptionNotHelpful"
+	preemptionNoCandidateReason = "NamespaceResourceGuaranteePreemptionNoCandidate"
+	preemptionErrorReason       = "NamespaceResourceGuaranteePreemptionError"
 )
 
 // NamespaceResourceGuarantee enforces per-namespace protected resource guarantees.
@@ -91,6 +101,13 @@ type preemptionDecisionTrace struct {
 	namespaceUsage map[string]map[v1.ResourceName]int64
 	mu             sync.Mutex
 	nodes          map[string]*nodePreemptionTrace
+}
+
+type preemptionEvent struct {
+	eventType     string
+	reason        string
+	nominatedNode string
+	note          string
 }
 
 // Name returns the plugin name.
@@ -263,7 +280,7 @@ func (pl *NamespaceResourceGuarantee) PodEligibleToPreemptOthers(_ context.Conte
 			podPriority := corev1helpers.PodPriority(pod)
 			for _, p := range nodeInfo.Pods {
 				if corev1helpers.PodPriority(p.Pod) < podPriority && podTerminatingByPreemption(p.Pod) {
-					return false, "not eligible due to a terminating pod on the nominated node."
+					return false, preemptionWaitingOnTerminatingVictims
 				}
 			}
 		}
@@ -677,33 +694,14 @@ func (pl *NamespaceResourceGuarantee) logPreemptionDecision(
 	trace.mu.Lock()
 	defer trace.mu.Unlock()
 
-	selectedNode := ""
-	if result != nil {
-		selectedNode = result.NominatedNodeName
-	}
-	var selectedVictims []string
-	if nodeTrace, ok := trace.nodes[selectedNode]; ok {
-		selectedVictims = podKeys(nodeTrace.victims)
-	}
-
-	pl.handle.EventRecorder().Eventf(
-		preemptor,
-		nil,
-		v1.EventTypeNormal,
-		"NamespaceResourceGuaranteePreemption",
-		"NamespaceResourceGuaranteePostFilter",
-		"DecisionID=%s selectedNode=%s victims=[%s] status=%s",
-		preemptor.UID,
-		selectedNode,
-		strings.Join(selectedVictims, ","),
-		status.Code(),
-	)
+	event := classifyPreemptionEvent(preemptor, result, status, trace)
+	pl.handle.EventRecorder().Eventf(preemptor, nil, event.eventType, event.reason, "NamespaceResourceGuaranteePostFilter", event.note)
 
 	for nodeName, nodeTrace := range trace.nodes {
 		reason := "candidate not selected"
 		if nodeTrace.statusCode != framework.Success {
 			reason = nodeTrace.statusMessage
-		} else if nodeName == selectedNode {
+		} else if nodeName == event.nominatedNode {
 			reason = "selected"
 		}
 		logger.V(2).Info(
@@ -718,6 +716,93 @@ func (pl *NamespaceResourceGuarantee) logPreemptionDecision(
 			"reason", reason,
 		)
 	}
+}
+
+func classifyPreemptionEvent(preemptor *v1.Pod, result *framework.PostFilterResult, status *framework.Status, trace *preemptionDecisionTrace) preemptionEvent {
+	nominatedNode := preemptor.Status.NominatedNodeName
+	if result != nil && len(result.NominatedNodeName) > 0 {
+		nominatedNode = result.NominatedNodeName
+	}
+
+	if status == nil {
+		return preemptionEvent{
+			eventType:     v1.EventTypeWarning,
+			reason:        preemptionErrorReason,
+			nominatedNode: nominatedNode,
+			note:          fmt.Sprintf("decisionID=%s phase=error reason=%q", preemptor.UID, "missing preemption status"),
+		}
+	}
+
+	switch status.Code() {
+	case framework.Success:
+		victims := selectedVictimKeys(trace, nominatedNode)
+		return preemptionEvent{
+			eventType:     v1.EventTypeNormal,
+			reason:        preemptionStartedReason,
+			nominatedNode: nominatedNode,
+			note: fmt.Sprintf(
+				"decisionID=%s phase=started nominatedNode=%s victims=[%s] note=%q",
+				preemptor.UID,
+				nominatedNode,
+				strings.Join(victims, ","),
+				"preemption initiated; victim termination may still be in progress",
+			),
+		}
+	case framework.Error:
+		return preemptionEvent{
+			eventType:     v1.EventTypeWarning,
+			reason:        preemptionErrorReason,
+			nominatedNode: nominatedNode,
+			note:          fmt.Sprintf("decisionID=%s phase=error reason=%q", preemptor.UID, status.Message()),
+		}
+	default:
+		if status.Message() == preemptionWaitingOnTerminatingVictims && len(nominatedNode) > 0 {
+			return preemptionEvent{
+				eventType:     v1.EventTypeNormal,
+				reason:        preemptionWaitingReason,
+				nominatedNode: nominatedNode,
+				note: fmt.Sprintf(
+					"decisionID=%s phase=waiting nominatedNode=%s reason=%q",
+					preemptor.UID,
+					nominatedNode,
+					"waiting for preempted pods to terminate",
+				),
+			}
+		}
+		if strings.Contains(status.Message(), preemptionNotHelpfulFragment) {
+			return preemptionEvent{
+				eventType:     v1.EventTypeNormal,
+				reason:        preemptionNotHelpfulReason,
+				nominatedNode: nominatedNode,
+				note:          fmt.Sprintf("decisionID=%s phase=not-helpful reason=%q", preemptor.UID, status.Message()),
+			}
+		}
+		if status.Message() == preemptionNoCandidateMessage || len(nominatedNode) == 0 {
+			return preemptionEvent{
+				eventType:     v1.EventTypeNormal,
+				reason:        preemptionNoCandidateReason,
+				nominatedNode: nominatedNode,
+				note:          fmt.Sprintf("decisionID=%s phase=no-candidate reason=%q", preemptor.UID, status.Message()),
+			}
+		}
+
+		return preemptionEvent{
+			eventType:     v1.EventTypeNormal,
+			reason:        preemptionNoCandidateReason,
+			nominatedNode: nominatedNode,
+			note:          fmt.Sprintf("decisionID=%s phase=no-candidate nominatedNode=%s reason=%q", preemptor.UID, nominatedNode, status.Message()),
+		}
+	}
+}
+
+func selectedVictimKeys(trace *preemptionDecisionTrace, nominatedNode string) []string {
+	if trace == nil || len(nominatedNode) == 0 {
+		return nil
+	}
+	if nodeTrace, ok := trace.nodes[nominatedNode]; ok {
+		return podKeys(nodeTrace.victims)
+	}
+	return nil
 }
 
 func podTerminatingByPreemption(p *v1.Pod) bool {

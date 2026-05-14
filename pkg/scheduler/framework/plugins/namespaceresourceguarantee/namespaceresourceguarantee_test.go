@@ -18,19 +18,33 @@ package namespaceresourceguarantee
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/informers"
+	clientsetfake "k8s.io/client-go/kubernetes/fake"
+	clientgoevents "k8s.io/client-go/tools/events"
+	"k8s.io/klog/v2"
 	ktesting "k8s.io/klog/v2/ktesting"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/backend/cache"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/defaultbinder"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/feature"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/noderesources"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/queuesort"
 	plugintesting "k8s.io/kubernetes/pkg/scheduler/framework/plugins/testing"
+	frameworkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
+	"k8s.io/kubernetes/pkg/scheduler/metrics"
+	tf "k8s.io/kubernetes/pkg/scheduler/testing/framework"
 )
 
 func TestPreFilter(t *testing.T) {
@@ -387,6 +401,297 @@ func TestOrderedDeficientResources(t *testing.T) {
 	}
 }
 
+func TestClassifyPreemptionEvent(t *testing.T) {
+	traceWithVictims := &preemptionDecisionTrace{
+		nodes: map[string]*nodePreemptionTrace{
+			"node-a": {
+				nodeName: "node-a",
+				victims: []*v1.Pod{
+					makePodWithRequests("victim-a", "team-b", "normal", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
+					makePodWithRequests("victim-b", "team-c", "normal", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name                string
+		pod                 *v1.Pod
+		result              *framework.PostFilterResult
+		status              *framework.Status
+		trace               *preemptionDecisionTrace
+		wantEventType       string
+		wantReason          string
+		wantNoteContains    []string
+		wantNoteNotContains []string
+	}{
+		{
+			name:          "started event says initiated not completed",
+			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
+			result:        framework.NewPostFilterResultWithNominatedNode("node-a"),
+			status:        framework.NewStatus(framework.Success),
+			trace:         traceWithVictims,
+			wantEventType: v1.EventTypeNormal,
+			wantReason:    preemptionStartedReason,
+			wantNoteContains: []string{
+				"phase=started",
+				"nominatedNode=node-a",
+				"victims=[team-b/victim-a,team-c/victim-b]",
+				"preemption initiated; victim termination may still be in progress",
+			},
+		},
+		{
+			name: "waiting event uses existing nominated node and omits empty victims",
+			pod: func() *v1.Pod {
+				p := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
+				p.Status.NominatedNodeName = "node-b"
+				return p
+			}(),
+			status:        framework.NewStatus(framework.Unschedulable, preemptionWaitingOnTerminatingVictims),
+			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
+			wantEventType: v1.EventTypeNormal,
+			wantReason:    preemptionWaitingReason,
+			wantNoteContains: []string{
+				"phase=waiting",
+				"nominatedNode=node-b",
+				`reason="waiting for preempted pods to terminate"`,
+			},
+			wantNoteNotContains: []string{"victims=[]"},
+		},
+		{
+			name:          "not helpful event is explicit",
+			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
+			status:        framework.NewStatus(framework.Unschedulable, "0/10 nodes are available: 10 Preemption is not helpful for scheduling."),
+			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
+			wantEventType: v1.EventTypeNormal,
+			wantReason:    preemptionNotHelpfulReason,
+			wantNoteContains: []string{
+				"phase=not-helpful",
+				preemptionNotHelpfulFragment,
+			},
+		},
+		{
+			name:          "no candidate event is explicit",
+			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
+			status:        framework.NewStatus(framework.Unschedulable, preemptionNoCandidateMessage),
+			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
+			wantEventType: v1.EventTypeNormal,
+			wantReason:    preemptionNoCandidateReason,
+			wantNoteContains: []string{
+				"phase=no-candidate",
+				preemptionNoCandidateMessage,
+			},
+		},
+		{
+			name:          "error event is warning",
+			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
+			status:        framework.NewStatus(framework.Error, "boom"),
+			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
+			wantEventType: v1.EventTypeWarning,
+			wantReason:    preemptionErrorReason,
+			wantNoteContains: []string{
+				"phase=error",
+				`reason="boom"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyPreemptionEvent(tt.pod, tt.result, tt.status, tt.trace)
+			if got.eventType != tt.wantEventType {
+				t.Fatalf("unexpected event type: got %q, want %q", got.eventType, tt.wantEventType)
+			}
+			if got.reason != tt.wantReason {
+				t.Fatalf("unexpected reason: got %q, want %q", got.reason, tt.wantReason)
+			}
+			for _, want := range tt.wantNoteContains {
+				if !strings.Contains(got.note, want) {
+					t.Fatalf("expected note %q to contain %q", got.note, want)
+				}
+			}
+			for _, unwanted := range tt.wantNoteNotContains {
+				if strings.Contains(got.note, unwanted) {
+					t.Fatalf("expected note %q to omit %q", got.note, unwanted)
+				}
+			}
+		})
+	}
+}
+
+func TestLogPreemptionDecisionEmitsEvent(t *testing.T) {
+	recorder := clientgoevents.NewFakeRecorder(4)
+	fh, err := frameworkruntime.NewFramework(context.Background(), nil, nil, frameworkruntime.WithEventRecorder(recorder))
+	if err != nil {
+		t.Fatalf("Failed creating framework runtime: %v", err)
+	}
+
+	plugin := &NamespaceResourceGuarantee{handle: fh}
+	pod := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
+	pod.Status.NominatedNodeName = "node-a"
+	trace := &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}}
+	plugin.preemptionTrace.Store(pod.UID, trace)
+	defer plugin.preemptionTrace.Delete(pod.UID)
+
+	plugin.logPreemptionDecision(context.Background(), pod, nil, framework.NewStatus(framework.Unschedulable, preemptionWaitingOnTerminatingVictims))
+
+	select {
+	case event := <-recorder.Events:
+		if !strings.Contains(event, preemptionWaitingReason) {
+			t.Fatalf("expected waiting reason in event, got %q", event)
+		}
+		if !strings.Contains(event, "phase=waiting") {
+			t.Fatalf("expected waiting phase in event, got %q", event)
+		}
+		if !strings.Contains(event, "nominatedNode=node-a") {
+			t.Fatalf("expected nominated node in event, got %q", event)
+		}
+		if strings.Contains(event, "victims=[]") {
+			t.Fatalf("expected no empty victims list in event, got %q", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for event")
+	}
+}
+
+func TestPreFilterDoesNotEmitEvents(t *testing.T) {
+	ctx := context.Background()
+	recorder := clientgoevents.NewFakeRecorder(1)
+	fh, err := frameworkruntime.NewFramework(ctx, nil, nil, frameworkruntime.WithEventRecorder(recorder), frameworkruntime.WithSnapshotSharedLister(internalcache.NewSnapshot(nil, []*v1.Node{makeNode("node-a")})))
+	if err != nil {
+		t.Fatalf("Failed creating framework runtime: %v", err)
+	}
+
+	plugin := &NamespaceResourceGuarantee{
+		handle:             fh,
+		args:               newArgs(map[string]v1.ResourceList{"team-a": {v1.ResourceCPU: resource.MustParse("4")}}),
+		configuredResource: []v1.ResourceName{v1.ResourceCPU},
+	}
+	pod := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
+
+	_, status := plugin.PreFilter(ctx, framework.NewCycleState(), pod)
+	if status != nil && !status.IsSuccess() {
+		t.Fatalf("unexpected status: %v", status)
+	}
+
+	select {
+	case event := <-recorder.Events:
+		t.Fatalf("did not expect any prefilter event, got %q", event)
+	default:
+	}
+}
+
+var nodeResourcesFitFunc = frameworkruntime.FactoryAdapter(feature.Features{}, noderesources.NewFit)
+
+func TestPostFilterEmitsStartedEventEndToEnd(t *testing.T) {
+	metrics.Register()
+
+	preemptor := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+		v1.ResourceCPU: "1200m",
+	})
+	preemptor.Spec.Priority = ptrTo(int32(1000))
+	victim := makePodWithRequests("victim", "team-b", "normal", "node-a", map[v1.ResourceName]string{
+		v1.ResourceCPU: "1000m",
+	})
+	victim.Spec.Priority = ptrTo(int32(0))
+
+	node := makeNode("node-a")
+	node.Status.Allocatable = v1.ResourceList{
+		v1.ResourceCPU:    resource.MustParse("1500m"),
+		v1.ResourceMemory: resource.MustParse("1Ti"),
+		v1.ResourcePods:   resource.MustParse("32"),
+	}
+
+	cs := clientsetfake.NewClientset(&v1.PodList{Items: []v1.Pod{*preemptor, *victim}})
+	informerFactory := informers.NewSharedInformerFactory(cs, 0)
+	podInformer := informerFactory.Core().V1().Pods().Informer()
+	if err := podInformer.GetStore().Add(preemptor); err != nil {
+		t.Fatal(err)
+	}
+	if err := podInformer.GetStore().Add(victim); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := clientgoevents.NewFakeRecorder(4)
+	logger, ctx := ktesting.NewTestContext(t)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	fh, err := tf.NewFramework(ctx,
+		[]tf.RegisterPluginFunc{
+			tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
+			tf.RegisterPluginAsExtensions(noderesources.Name, nodeResourcesFitFunc, "Filter", "PreFilter"),
+			tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
+		},
+		"",
+		frameworkruntime.WithClientSet(cs),
+		frameworkruntime.WithEventRecorder(recorder),
+		frameworkruntime.WithInformerFactory(informerFactory),
+		frameworkruntime.WithPodNominator(noopPodNominator{}),
+		frameworkruntime.WithSnapshotSharedLister(internalcache.NewSnapshot([]*v1.Pod{victim}, []*v1.Node{node})),
+		frameworkruntime.WithWaitingPods(frameworkruntime.NewWaitingPodsMap()),
+		frameworkruntime.WithLogger(logger),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	informerFactory.Start(ctx.Done())
+	informerFactory.WaitForCacheSync(ctx.Done())
+
+	pluginIface, err := New(ctx, runtime.Object(&config.NamespaceResourceGuaranteeArgs{
+		ProtectedPriorityClassName: "protected",
+		NamespaceGuarantees: map[string]v1.ResourceList{
+			"team-a": {v1.ResourceCPU: resource.MustParse("10")},
+		},
+	}), fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin := pluginIface.(*NamespaceResourceGuarantee)
+
+	state := framework.NewCycleState()
+	if _, status, _ := fh.RunPreFilterPlugins(ctx, state, preemptor); !status.IsSuccess() {
+		t.Fatalf("unexpected prefilter status: %v", status)
+	}
+
+	nodeToStatus := framework.NewDefaultNodeToStatus()
+	nodeToStatus.Set("node-a", framework.NewStatus(framework.Unschedulable))
+
+	result, status := plugin.PostFilter(ctx, state, preemptor, nodeToStatus)
+	if !status.IsSuccess() {
+		t.Fatalf("unexpected postfilter status: %v", status)
+	}
+	if result == nil || result.NominatedNodeName != "node-a" {
+		t.Fatalf("unexpected postfilter result: %#v", result)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case event := <-recorder.Events:
+			if !strings.Contains(event, preemptionStartedReason) {
+				continue
+			}
+			if !strings.Contains(event, "phase=started") {
+				t.Fatalf("expected started phase in event, got %q", event)
+			}
+			if !strings.Contains(event, "nominatedNode=node-a") {
+				t.Fatalf("expected nominated node in event, got %q", event)
+			}
+			if !strings.Contains(event, "team-b/victim") {
+				t.Fatalf("expected victim key in event, got %q", event)
+			}
+			if !strings.Contains(event, "victim termination may still be in progress") {
+				t.Fatalf("expected non-terminal note in event, got %q", event)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for plugin started event")
+		}
+	}
+}
+
 func newArgs(guarantees map[string]v1.ResourceList) config.NamespaceResourceGuaranteeArgs {
 	return config.NamespaceResourceGuaranteeArgs{
 		ProtectedPriorityClassName: "protected",
@@ -446,3 +751,17 @@ func makePodWithRequestsAndUID(name, namespace, priorityClassName, nodeName stri
 func typesUID(value string) types.UID {
 	return types.UID(value)
 }
+
+func ptrTo[T any](v T) *T {
+	return &v
+}
+
+type noopPodNominator struct{}
+
+func (noopPodNominator) AddNominatedPod(klog.Logger, *framework.PodInfo, *framework.NominatingInfo) {}
+
+func (noopPodNominator) DeleteNominatedPodIfExists(*v1.Pod) {}
+
+func (noopPodNominator) UpdateNominatedPod(klog.Logger, *v1.Pod, *framework.PodInfo) {}
+
+func (noopPodNominator) NominatedPodsForNode(string) []*framework.PodInfo { return nil }
