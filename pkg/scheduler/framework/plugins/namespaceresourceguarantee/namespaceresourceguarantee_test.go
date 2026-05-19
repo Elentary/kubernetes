@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/informers"
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	clientgoevents "k8s.io/client-go/tools/events"
+	"k8s.io/component-base/metrics/testutil"
 	"k8s.io/klog/v2"
 	ktesting "k8s.io/klog/v2/ktesting"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
@@ -689,6 +690,54 @@ func TestPostFilterEmitsStartedEventEndToEnd(t *testing.T) {
 		case <-deadline:
 			t.Fatal("timed out waiting for plugin started event")
 		}
+	}
+}
+
+func TestNewRecordsConfiguredQuotaMetrics(t *testing.T) {
+	namespaceResourceGuaranteeQuota.Reset()
+	namespaceResourceGuaranteeProtectedPriorityClassInfo.Reset()
+	t.Cleanup(func() {
+		namespaceResourceGuaranteeQuota.Reset()
+		namespaceResourceGuaranteeProtectedPriorityClassInfo.Reset()
+	})
+
+	ctx := context.Background()
+	fh, err := frameworkruntime.NewFramework(ctx, nil, &config.KubeSchedulerProfile{SchedulerName: "test-profile"})
+	if err != nil {
+		t.Fatalf("Failed creating framework runtime: %v", err)
+	}
+
+	args := &config.NamespaceResourceGuaranteeArgs{
+		ProtectedPriorityClassName: "protected",
+		NamespaceGuarantees: map[string]v1.ResourceList{
+			"team-a": {
+				v1.ResourceCPU:                    resource.MustParse("4"),
+				v1.ResourceMemory:                 resource.MustParse("16Gi"),
+				v1.ResourceName("nvidia.com/gpu"): resource.MustParse("3"),
+			},
+		},
+	}
+	if _, err := New(ctx, args, fh); err != nil {
+		t.Fatalf("unexpected error creating plugin: %v", err)
+	}
+
+	expected := `
+		# HELP scheduler_namespace_resource_guarantee_protected_priority_class_info [ALPHA] Information about the configured protected priority class for NamespaceResourceGuarantee plugin.
+		# TYPE scheduler_namespace_resource_guarantee_protected_priority_class_info gauge
+		scheduler_namespace_resource_guarantee_protected_priority_class_info{priority_class="protected",profile="test-profile"} 1
+		# HELP scheduler_namespace_resource_guarantee_quota [ALPHA] Configured per-namespace protected resource quota for NamespaceResourceGuarantee plugin.
+		# TYPE scheduler_namespace_resource_guarantee_quota gauge
+		scheduler_namespace_resource_guarantee_quota{namespace="team-a",profile="test-profile",resource="cpu",unit="millicore"} 4000
+		scheduler_namespace_resource_guarantee_quota{namespace="team-a",profile="test-profile",resource="memory",unit="byte"} 1.7179869184e+10
+		scheduler_namespace_resource_guarantee_quota{namespace="team-a",profile="test-profile",resource="nvidia.com/gpu",unit="unit"} 3
+	`
+	if err := testutil.GatherAndCompare(
+		metrics.GetGather(),
+		strings.NewReader(expected),
+		"scheduler_namespace_resource_guarantee_protected_priority_class_info",
+		"scheduler_namespace_resource_guarantee_quota",
+	); err != nil {
+		t.Fatal(err)
 	}
 }
 
