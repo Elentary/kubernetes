@@ -44,7 +44,7 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/names"
 	"k8s.io/kubernetes/pkg/scheduler/framework/preemption"
-	"k8s.io/kubernetes/pkg/scheduler/metrics"
+	schedmetrics "k8s.io/kubernetes/pkg/scheduler/metrics"
 	schedutil "k8s.io/kubernetes/pkg/scheduler/util"
 )
 
@@ -131,6 +131,8 @@ func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framew
 		configuredResource: configuredResources(args.NamespaceGuarantees),
 		pdbLister:          getPDBLister(handle),
 	}
+	registerMetrics()
+	plugin.recordConfiguredQuotaMetrics(profileName(handle))
 	if handle != nil && handle.SharedInformerFactory() != nil {
 		plugin.evaluator = preemption.NewEvaluator(Name, handle, plugin, utilfeature.DefaultFeatureGate.Enabled(features.SchedulerAsyncPreemption))
 
@@ -215,7 +217,7 @@ func (pl *NamespaceResourceGuarantee) EventsToRegister(_ context.Context) ([]fra
 }
 
 func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod, m framework.NodeToStatusReader) (*framework.PostFilterResult, *framework.Status) {
-	defer metrics.PreemptionAttempts.Inc()
+	defer schedmetrics.PreemptionAttempts.Inc()
 	if !pl.isProtectedPod(pod) || len(pl.configuredResource) == 0 {
 		return nil, framework.NewStatus(framework.Unschedulable, "namespace resource guarantee preemption is only enabled for protected pods")
 	}
