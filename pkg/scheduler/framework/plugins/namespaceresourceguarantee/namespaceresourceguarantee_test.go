@@ -41,6 +41,7 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/defaultbinder"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/feature"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/noderesources"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nominatednodereservation"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/queuesort"
 	plugintesting "k8s.io/kubernetes/pkg/scheduler/framework/plugins/testing"
 	frameworkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
@@ -814,3 +815,60 @@ func (noopPodNominator) DeleteNominatedPodIfExists(*v1.Pod) {}
 func (noopPodNominator) UpdateNominatedPod(klog.Logger, *v1.Pod, *framework.PodInfo) {}
 
 func (noopPodNominator) NominatedPodsForNode(string) []*framework.PodInfo { return nil }
+
+func TestSyncNominatedNodeReservationLifecycle(t *testing.T) {
+	nominatednodereservation.ResetSharedStoreForTest()
+	t.Cleanup(nominatednodereservation.ResetSharedStoreForTest)
+
+	recorder := clientgoevents.NewFakeRecorder(4)
+	fh, err := frameworkruntime.NewFramework(context.Background(), nil, nil, frameworkruntime.WithEventRecorder(recorder))
+	if err != nil {
+		t.Fatalf("Failed creating framework runtime: %v", err)
+	}
+
+	plugin := &NamespaceResourceGuarantee{handle: fh}
+	preemptor := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
+	result := framework.NewPostFilterResultWithNominatedNode("node-a")
+
+	plugin.syncNominatedNodeReservation(context.Background(), preemptor, result, framework.NewStatus(framework.Success))
+
+	reservation, ok := nominatednodereservation.SharedStore().Get("node-a")
+	if !ok {
+		t.Fatal("expected reservation to exist after successful nomination")
+	}
+	if reservation.HolderPodUID != preemptor.UID {
+		t.Fatalf("unexpected holder UID %q", reservation.HolderPodUID)
+	}
+
+	select {
+	case event := <-recorder.Events:
+		if !strings.Contains(event, nominatednodereservation.EventReasonNodeReserved) {
+			t.Fatalf("expected reserve event reason in event, got %q", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for reserve event")
+	}
+
+	plugin.syncNominatedNodeReservation(
+		context.Background(),
+		preemptor,
+		nil,
+		framework.NewStatus(framework.Unschedulable, preemptionNoCandidateMessage),
+	)
+
+	if _, ok := nominatednodereservation.SharedStore().Get("node-a"); ok {
+		t.Fatal("expected reservation to be released when no preemption candidate is available")
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case event := <-recorder.Events:
+			if strings.Contains(event, nominatednodereservation.EventReasonNodeReservationReleased) {
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for reservation release event")
+		}
+	}
+}
