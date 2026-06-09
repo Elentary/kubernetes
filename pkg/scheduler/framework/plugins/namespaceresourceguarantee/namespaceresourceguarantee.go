@@ -43,6 +43,7 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/apis/config/validation"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/names"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nominatednodereservation"
 	"k8s.io/kubernetes/pkg/scheduler/framework/preemption"
 	schedmetrics "k8s.io/kubernetes/pkg/scheduler/metrics"
 	schedutil "k8s.io/kubernetes/pkg/scheduler/util"
@@ -234,12 +235,74 @@ func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state *fra
 
 	result, status := pl.evaluator.Preempt(ctx, state, pod, m)
 	pl.logPreemptionDecision(ctx, pod, result, status)
+	pl.syncNominatedNodeReservation(ctx, pod, result, status)
 
 	msg := status.Message()
 	if len(msg) > 0 {
 		return result, framework.NewStatus(status.Code(), "preemption: "+msg)
 	}
 	return result, status
+}
+
+func (pl *NamespaceResourceGuarantee) syncNominatedNodeReservation(ctx context.Context, pod *v1.Pod, result *framework.PostFilterResult, status *framework.Status) {
+	logger := klog.FromContext(ctx)
+	store := nominatednodereservation.SharedStore()
+
+	if status != nil && status.IsSuccess() && result != nil && len(result.NominatedNodeName) > 0 {
+		reservation, changed := store.Reserve(result.NominatedNodeName, pod, Name)
+		if changed {
+			logger.V(2).Info("Reserved nominated node for namespace resource guarantee preemption", "preemptor", klog.KObj(pod), "node", reservation.NodeName, "holderUID", reservation.HolderPodUID)
+			pl.handle.EventRecorder().Eventf(
+				pod,
+				nil,
+				v1.EventTypeNormal,
+				nominatednodereservation.EventReasonNodeReserved,
+				"NamespaceResourceGuaranteePostFilter",
+				"Reserved nominated node %s for quota preemption",
+				reservation.NodeName,
+			)
+		}
+		return
+	}
+
+	if result != nil && result.Mode() == framework.ModeOverride && len(result.NominatedNodeName) == 0 {
+		if released, ok := store.ReleaseByPod(pod.UID); ok {
+			logger.V(2).Info("Released nominated node reservation after preemption cleared nomination", "preemptor", klog.KObj(pod), "node", released.NodeName, "holderUID", released.HolderPodUID)
+			pl.handle.EventRecorder().Eventf(
+				pod,
+				nil,
+				v1.EventTypeNormal,
+				nominatednodereservation.EventReasonNodeReservationReleased,
+				"NamespaceResourceGuaranteePostFilter",
+				"Released nominated-node reservation for node %s: nomination cleared",
+				released.NodeName,
+			)
+		}
+		return
+	}
+
+	if status == nil || status.Code() != framework.Unschedulable {
+		return
+	}
+	msg := status.Message()
+	if msg == preemptionWaitingOnTerminatingVictims {
+		return
+	}
+	if msg == preemptionNoCandidateMessage || strings.Contains(msg, preemptionNotHelpfulFragment) {
+		if released, ok := store.ReleaseByPod(pod.UID); ok {
+			logger.V(2).Info("Released nominated node reservation after preemption found no candidate", "preemptor", klog.KObj(pod), "node", released.NodeName, "holderUID", released.HolderPodUID, "message", msg)
+			pl.handle.EventRecorder().Eventf(
+				pod,
+				nil,
+				v1.EventTypeNormal,
+				nominatednodereservation.EventReasonNodeReservationReleased,
+				"NamespaceResourceGuaranteePostFilter",
+				"Released nominated-node reservation for node %s: %s",
+				released.NodeName,
+				msg,
+			)
+		}
+	}
 }
 
 func (pl *NamespaceResourceGuarantee) PreEnqueue(_ context.Context, pod *v1.Pod) *framework.Status {
