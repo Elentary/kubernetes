@@ -32,6 +32,7 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/noderesources"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodeunschedulable"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodevolumelimits"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nominatednodereservation"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/podtopologyspread"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/queuesort"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/schedulinggates"
@@ -80,6 +81,7 @@ func NewInTreeRegistry() runtime.Registry {
 		defaultpreemption.Name:               runtime.FactoryAdapter(fts, defaultpreemption.New),
 		schedulinggates.Name:                 runtime.FactoryAdapter(fts, schedulinggates.New),
 		namespaceresourceguarantee.Name:      namespaceresourceguarantee.New,
+		nominatednodereservation.Name:        nominatednodereservation.New,
 	}
 
 	return registry
