@@ -33,6 +33,7 @@ const (
 	PodTopologySpread               = "PodTopologySpread"
 	SchedulingGates                 = "SchedulingGates"
 	NamespaceResourceGuarantee      = "NamespaceResourceGuarantee"
+	NominatedNodeReservation        = "NominatedNodeReservation"
 	TaintToleration                 = "TaintToleration"
 	VolumeBinding                   = "VolumeBinding"
 	VolumeRestrictions              = "VolumeRestrictions"
