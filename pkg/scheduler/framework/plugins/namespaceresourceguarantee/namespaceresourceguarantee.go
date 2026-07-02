@@ -55,6 +55,7 @@ const (
 
 	defaultMinCandidateNodesPercentage int32 = 10
 	defaultMinCandidateNodesAbsolute   int32 = 100
+	protectedGPUResource                     = v1.ResourceName("nvidia.com/gpu")
 
 	preemptionWaitingOnTerminatingVictims = "not eligible due to a terminating pod on the nominated node."
 	preemptionNoCandidateMessage          = "no candidate node for preemption"
@@ -81,6 +82,7 @@ var _ framework.PreFilterPlugin = &NamespaceResourceGuarantee{}
 var _ framework.EnqueueExtensions = &NamespaceResourceGuarantee{}
 var _ framework.PostFilterPlugin = &NamespaceResourceGuarantee{}
 var _ framework.PreEnqueuePlugin = &NamespaceResourceGuarantee{}
+var _ framework.ScorePlugin = &NamespaceResourceGuarantee{}
 var _ preemption.Interface = &NamespaceResourceGuarantee{}
 
 type resourceDeficit struct {
@@ -242,6 +244,41 @@ func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state *fra
 		return result, framework.NewStatus(status.Code(), "preemption: "+msg)
 	}
 	return result, status
+}
+
+// Score favors nodes that already have protected GPU usage, which helps pack
+// protected GPU pods onto fewer nodes and reduces fragmentation.
+func (pl *NamespaceResourceGuarantee) Score(ctx context.Context, _ *framework.CycleState, pod *v1.Pod, nodeName string) (int64, *framework.Status) {
+	incomingGPU := pl.scoredProtectedGPURequest(pod)
+	if incomingGPU == 0 {
+		return 0, nil
+	}
+
+	nodeInfo, err := pl.handle.SnapshotSharedLister().NodeInfos().Get(nodeName)
+	if err != nil {
+		return 0, framework.AsStatus(err)
+	}
+
+	allocatableGPU := nodeAllocatableForResource(nodeInfo, protectedGPUResource)
+	if allocatableGPU <= 0 {
+		return 0, nil
+	}
+
+	protectedGPUUsage := pl.nodeProtectedResourceUsage(nodeInfo, protectedGPUResource)
+	if protectedGPUUsage > allocatableGPU {
+		protectedGPUUsage = allocatableGPU
+	}
+	requestedAfterScheduling := protectedGPUUsage + incomingGPU
+	if requestedAfterScheduling > allocatableGPU {
+		requestedAfterScheduling = allocatableGPU
+	}
+
+	return (requestedAfterScheduling * framework.MaxNodeScore) / allocatableGPU, nil
+}
+
+// ScoreExtensions returns nil because the score is already normalized.
+func (pl *NamespaceResourceGuarantee) ScoreExtensions() framework.ScoreExtensions {
+	return nil
 }
 
 func (pl *NamespaceResourceGuarantee) syncNominatedNodeReservation(ctx context.Context, pod *v1.Pod, result *framework.PostFilterResult, status *framework.Status) {
@@ -555,6 +592,22 @@ func (pl *NamespaceResourceGuarantee) protectedPodRequests(pod *v1.Pod) map[v1.R
 		}
 	}
 	return requested
+}
+
+func (pl *NamespaceResourceGuarantee) scoredProtectedGPURequest(pod *v1.Pod) int64 {
+	if !pl.hasConfiguredResource(protectedGPUResource) {
+		return 0
+	}
+	return pl.protectedResourceRequest(pod, protectedGPUResource)
+}
+
+func (pl *NamespaceResourceGuarantee) hasConfiguredResource(resourceName v1.ResourceName) bool {
+	for _, configured := range pl.configuredResource {
+		if configured == resourceName {
+			return true
+		}
+	}
+	return false
 }
 
 func (pl *NamespaceResourceGuarantee) requestDecreased(originalPod, modifiedPod *v1.Pod) bool {
@@ -940,6 +993,18 @@ func nodeAllocatableForResource(nodeInfo *framework.NodeInfo, resourceName v1.Re
 	default:
 		return nodeInfo.Allocatable.ScalarResources[resourceName]
 	}
+}
+
+func (pl *NamespaceResourceGuarantee) nodeProtectedResourceUsage(nodeInfo *framework.NodeInfo, resourceName v1.ResourceName) int64 {
+	if nodeInfo == nil {
+		return 0
+	}
+
+	var usage int64
+	for _, podInfo := range nodeInfo.Pods {
+		usage += pl.protectedResourceRequest(podInfo.Pod, resourceName)
+	}
+	return usage
 }
 
 func formatDeficits(deficits []resourceDeficit) []string {
