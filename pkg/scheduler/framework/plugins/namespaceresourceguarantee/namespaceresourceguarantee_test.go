@@ -216,6 +216,111 @@ func TestEventsToRegister(t *testing.T) {
 	}
 }
 
+func TestScore(t *testing.T) {
+	makeGPUNode := func(name string, gpu string) *v1.Node {
+		node := makeNode(name)
+		node.Status.Allocatable[v1.ResourceName("nvidia.com/gpu")] = resource.MustParse(gpu)
+		return node
+	}
+
+	tests := []struct {
+		name         string
+		args         config.NamespaceResourceGuaranteeArgs
+		pod          *v1.Pod
+		existingPods []*v1.Pod
+		nodes        []*v1.Node
+		wantScores   map[string]int64
+	}{
+		{
+			name: "protected gpu pod prefers node with existing protected gpu usage",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {v1.ResourceName("nvidia.com/gpu"): resource.MustParse("8")},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceName("nvidia.com/gpu"): "1",
+			}),
+			existingPods: []*v1.Pod{
+				makePodWithRequests("packed", "team-a", "protected", "node-a", map[v1.ResourceName]string{v1.ResourceName("nvidia.com/gpu"): "3"}),
+			},
+			nodes: []*v1.Node{makeGPUNode("node-a", "8"), makeGPUNode("node-b", "8")},
+			wantScores: map[string]int64{
+				"node-a": 50,
+				"node-b": 12,
+			},
+		},
+		{
+			name: "protected pod without gpu request stays neutral",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {v1.ResourceName("nvidia.com/gpu"): resource.MustParse("8")},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}),
+			existingPods: []*v1.Pod{
+				makePodWithRequests("packed", "team-a", "protected", "node-a", map[v1.ResourceName]string{v1.ResourceName("nvidia.com/gpu"): "3"}),
+			},
+			nodes: []*v1.Node{makeGPUNode("node-a", "8"), makeGPUNode("node-b", "8")},
+			wantScores: map[string]int64{
+				"node-a": 0,
+				"node-b": 0,
+			},
+		},
+		{
+			name: "normal gpu pod stays neutral",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {v1.ResourceName("nvidia.com/gpu"): resource.MustParse("8")},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "normal", "", map[v1.ResourceName]string{
+				v1.ResourceName("nvidia.com/gpu"): "1",
+			}),
+			existingPods: []*v1.Pod{
+				makePodWithRequests("packed", "team-a", "protected", "node-a", map[v1.ResourceName]string{v1.ResourceName("nvidia.com/gpu"): "3"}),
+			},
+			nodes: []*v1.Node{makeGPUNode("node-a", "8"), makeGPUNode("node-b", "8")},
+			wantScores: map[string]int64{
+				"node-a": 0,
+				"node-b": 0,
+			},
+		},
+		{
+			name: "normal gpu usage does not affect packing score",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {v1.ResourceName("nvidia.com/gpu"): resource.MustParse("8")},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceName("nvidia.com/gpu"): "1",
+			}),
+			existingPods: []*v1.Pod{
+				makePodWithRequests("normal-gpu", "team-a", "normal", "node-a", map[v1.ResourceName]string{v1.ResourceName("nvidia.com/gpu"): "4"}),
+				makePodWithRequests("protected-gpu", "team-a", "protected", "node-b", map[v1.ResourceName]string{v1.ResourceName("nvidia.com/gpu"): "1"}),
+			},
+			nodes: []*v1.Node{makeGPUNode("node-a", "8"), makeGPUNode("node-b", "8")},
+			wantScores: map[string]int64{
+				"node-a": 12,
+				"node-b": 25,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			plugin := plugintesting.SetupPlugin(ctx, t, New, &tt.args, internalcache.NewSnapshot(tt.existingPods, tt.nodes)).(*NamespaceResourceGuarantee)
+			for nodeName, want := range tt.wantScores {
+				got, status := plugin.Score(ctx, framework.NewCycleState(), tt.pod, nodeName)
+				if status != nil && !status.IsSuccess() {
+					t.Fatalf("unexpected score status for %s: %v", nodeName, status)
+				}
+				if got != want {
+					t.Fatalf("unexpected score for %s: got %d, want %d", nodeName, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestIsSchedulableAfterPodChange(t *testing.T) {
 	tests := []struct {
 		name         string
