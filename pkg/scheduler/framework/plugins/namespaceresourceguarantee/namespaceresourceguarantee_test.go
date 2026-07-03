@@ -18,6 +18,7 @@ package namespaceresourceguarantee
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"k8s.io/component-base/metrics/testutil"
 	"k8s.io/klog/v2"
 	ktesting "k8s.io/klog/v2/ktesting"
+	corevalidation "k8s.io/kubernetes/pkg/apis/core/validation"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/backend/cache"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
@@ -623,6 +625,51 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestClassifyPreemptionEventSummarizesLongVictimList(t *testing.T) {
+	victims := make([]*v1.Pod, 0, 80)
+	for i := 0; i < cap(victims); i++ {
+		victims = append(victims, makePodWithRequests(
+			fmt.Sprintf("victim-%02d-%s", i, strings.Repeat("x", 32)),
+			"team-b",
+			"normal",
+			"node-a",
+			map[v1.ResourceName]string{v1.ResourceCPU: "1"},
+		))
+	}
+	victimKeys := podKeys(victims)
+
+	event := classifyPreemptionEvent(
+		makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
+		framework.NewPostFilterResultWithNominatedNode("node-a"),
+		framework.NewStatus(framework.Success),
+		&preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{
+			"node-a": {
+				nodeName: "node-a",
+				victims:  victims,
+			},
+		}},
+	)
+
+	if len(event.note) > corevalidation.NoteLengthLimit {
+		t.Fatalf("expected note length <= %d, got %d: %q", corevalidation.NoteLengthLimit, len(event.note), event.note)
+	}
+	if !strings.Contains(event.note, "phase=started") {
+		t.Fatalf("expected started phase in note, got %q", event.note)
+	}
+	if !strings.Contains(event.note, "nominatedNode=node-a") {
+		t.Fatalf("expected nominated node in note, got %q", event.note)
+	}
+	if !strings.Contains(event.note, victimKeys[0]) {
+		t.Fatalf("expected first victim key in note, got %q", event.note)
+	}
+	if !strings.Contains(event.note, "...(+") {
+		t.Fatalf("expected summarized victim list in note, got %q", event.note)
+	}
+	if strings.Contains(event.note, victimKeys[len(victimKeys)-1]) {
+		t.Fatalf("expected note to omit at least one trailing victim, got %q", event.note)
 	}
 }
 

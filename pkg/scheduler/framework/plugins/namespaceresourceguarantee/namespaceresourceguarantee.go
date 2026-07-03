@@ -38,9 +38,10 @@ import (
 	corev1helpers "k8s.io/component-helpers/scheduling/corev1"
 	"k8s.io/klog/v2"
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
+	corevalidation "k8s.io/kubernetes/pkg/apis/core/validation"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
-	"k8s.io/kubernetes/pkg/scheduler/apis/config/validation"
+	configvalidation "k8s.io/kubernetes/pkg/scheduler/apis/config/validation"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/names"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nominatednodereservation"
@@ -124,7 +125,7 @@ func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framew
 	if !ok {
 		return nil, fmt.Errorf("got args of type %T, want *NamespaceResourceGuaranteeArgs", obj)
 	}
-	if err := validation.ValidateNamespaceResourceGuaranteeArgs(nil, args); err != nil {
+	if err := configvalidation.ValidateNamespaceResourceGuaranteeArgs(nil, args); err != nil {
 		return nil, err
 	}
 
@@ -858,20 +859,14 @@ func classifyPreemptionEvent(preemptor *v1.Pod, result *framework.PostFilterResu
 			eventType:     v1.EventTypeNormal,
 			reason:        preemptionStartedReason,
 			nominatedNode: nominatedNode,
-			note: fmt.Sprintf(
-				"decisionID=%s phase=started nominatedNode=%s victims=[%s] note=%q",
-				preemptor.UID,
-				nominatedNode,
-				strings.Join(victims, ","),
-				"preemption initiated; victim termination may still be in progress",
-			),
+			note:          formatStartedPreemptionEventNote(preemptor.UID, nominatedNode, victims),
 		}
 	case framework.Error:
 		return preemptionEvent{
 			eventType:     v1.EventTypeWarning,
 			reason:        preemptionErrorReason,
 			nominatedNode: nominatedNode,
-			note:          fmt.Sprintf("decisionID=%s phase=error reason=%q", preemptor.UID, status.Message()),
+			note:          truncatePreemptionEventNote(fmt.Sprintf("decisionID=%s phase=error reason=%q", preemptor.UID, status.Message())),
 		}
 	default:
 		if status.Message() == preemptionWaitingOnTerminatingVictims && len(nominatedNode) > 0 {
@@ -879,12 +874,12 @@ func classifyPreemptionEvent(preemptor *v1.Pod, result *framework.PostFilterResu
 				eventType:     v1.EventTypeNormal,
 				reason:        preemptionWaitingReason,
 				nominatedNode: nominatedNode,
-				note: fmt.Sprintf(
+				note: truncatePreemptionEventNote(fmt.Sprintf(
 					"decisionID=%s phase=waiting nominatedNode=%s reason=%q",
 					preemptor.UID,
 					nominatedNode,
 					"waiting for preempted pods to terminate",
-				),
+				)),
 			}
 		}
 		if strings.Contains(status.Message(), preemptionNotHelpfulFragment) {
@@ -892,7 +887,7 @@ func classifyPreemptionEvent(preemptor *v1.Pod, result *framework.PostFilterResu
 				eventType:     v1.EventTypeNormal,
 				reason:        preemptionNotHelpfulReason,
 				nominatedNode: nominatedNode,
-				note:          fmt.Sprintf("decisionID=%s phase=not-helpful reason=%q", preemptor.UID, status.Message()),
+				note:          truncatePreemptionEventNote(fmt.Sprintf("decisionID=%s phase=not-helpful reason=%q", preemptor.UID, status.Message())),
 			}
 		}
 		if status.Message() == preemptionNoCandidateMessage || len(nominatedNode) == 0 {
@@ -900,7 +895,7 @@ func classifyPreemptionEvent(preemptor *v1.Pod, result *framework.PostFilterResu
 				eventType:     v1.EventTypeNormal,
 				reason:        preemptionNoCandidateReason,
 				nominatedNode: nominatedNode,
-				note:          fmt.Sprintf("decisionID=%s phase=no-candidate reason=%q", preemptor.UID, status.Message()),
+				note:          truncatePreemptionEventNote(fmt.Sprintf("decisionID=%s phase=no-candidate reason=%q", preemptor.UID, status.Message())),
 			}
 		}
 
@@ -908,9 +903,66 @@ func classifyPreemptionEvent(preemptor *v1.Pod, result *framework.PostFilterResu
 			eventType:     v1.EventTypeNormal,
 			reason:        preemptionNoCandidateReason,
 			nominatedNode: nominatedNode,
-			note:          fmt.Sprintf("decisionID=%s phase=no-candidate nominatedNode=%s reason=%q", preemptor.UID, nominatedNode, status.Message()),
+			note:          truncatePreemptionEventNote(fmt.Sprintf("decisionID=%s phase=no-candidate nominatedNode=%s reason=%q", preemptor.UID, nominatedNode, status.Message())),
 		}
 	}
+}
+
+func formatStartedPreemptionEventNote(preemptorUID types.UID, nominatedNode string, victims []string) string {
+	const startedNote = "preemption initiated; victim termination may still be in progress"
+
+	prefix := fmt.Sprintf("decisionID=%s phase=started nominatedNode=%s victims=[", preemptorUID, nominatedNode)
+	suffix := fmt.Sprintf("] note=%q", startedNote)
+	availableVictimChars := corevalidation.NoteLengthLimit - len(prefix) - len(suffix)
+
+	return truncatePreemptionEventNote(prefix + summarizeVictimKeysForEvent(victims, availableVictimChars) + suffix)
+}
+
+func summarizeVictimKeysForEvent(victims []string, maxLen int) string {
+	if len(victims) == 0 || maxLen <= 0 {
+		return ""
+	}
+
+	joined := strings.Join(victims, ",")
+	if len(joined) <= maxLen {
+		return joined
+	}
+
+	var b strings.Builder
+	maxOmittedSuffixLen := len(fmt.Sprintf(",...(+%d more)", len(victims)))
+	for i, victim := range victims {
+		separatorLen := 0
+		if b.Len() > 0 {
+			separatorLen = 1
+		}
+
+		if b.Len()+separatorLen+len(victim)+maxOmittedSuffixLen > maxLen {
+			if b.Len() == 0 {
+				summary := fmt.Sprintf("%d victims", len(victims))
+				if len(summary) > maxLen {
+					return summary[:maxLen]
+				}
+				return summary
+			}
+			b.WriteString(fmt.Sprintf(",...(+%d more)", len(victims)-i))
+			return b.String()
+		}
+
+		if separatorLen == 1 {
+			b.WriteByte(',')
+		}
+		b.WriteString(victim)
+	}
+
+	return b.String()
+}
+
+func truncatePreemptionEventNote(note string) string {
+	if len(note) <= corevalidation.NoteLengthLimit {
+		return note
+	}
+	suffix := " ..."
+	return note[:corevalidation.NoteLengthLimit-len(suffix)] + suffix
 }
 
 func selectedVictimKeys(trace *preemptionDecisionTrace, nominatedNode string) []string {
