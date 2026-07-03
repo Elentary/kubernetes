@@ -59,6 +59,9 @@ const (
 	// numberOfHighestScoredNodesToReport is the number of node scores
 	// to be included in ScheduleResult.
 	numberOfHighestScoredNodesToReport = 3
+	// detailedScoreLoggingProfile is the scheduler profile for which per-node
+	// scoring details are always emitted at info level for observability.
+	detailedScoreLoggingProfile = "better-scheduler"
 )
 
 // ScheduleOne does the entire scheduling workflow for a single pod. It is serialized on the scheduling algorithm's host fitting.
@@ -786,12 +789,12 @@ func prioritizeNodes(
 		return nil, scoreStatus.AsError()
 	}
 
-	// Additional details logged at level 10 if enabled.
-	loggerVTen := logger.V(10)
-	if loggerVTen.Enabled() {
+	profileName := fwk.ProfileName()
+	decisionLogsEnabled := profileName == detailedScoreLoggingProfile
+	if decisionLogsEnabled {
 		for _, nodeScore := range nodesScores {
 			for _, pluginScore := range nodeScore.Scores {
-				loggerVTen.Info("Plugin scored node for pod", "pod", klog.KObj(pod), "plugin", pluginScore.Name, "node", nodeScore.Name, "score", pluginScore.Score)
+				logger.Info("Plugin scored node for pod", "profile", profileName, "pod", klog.KObj(pod), "plugin", pluginScore.Name, "node", nodeScore.Name, "score", pluginScore.Score)
 			}
 		}
 	}
@@ -824,8 +827,8 @@ func prioritizeNodes(
 				for i := range *prioritizedList {
 					nodename := (*prioritizedList)[i].Host
 					score := (*prioritizedList)[i].Score
-					if loggerVTen.Enabled() {
-						loggerVTen.Info("Extender scored node for pod", "pod", klog.KObj(pod), "extender", extenders[extIndex].Name(), "node", nodename, "score", score)
+					if decisionLogsEnabled {
+						logger.Info("Extender scored node for pod", "profile", profileName, "pod", klog.KObj(pod), "extender", extenders[extIndex].Name(), "node", nodename, "score", score)
 					}
 
 					// MaxExtenderPriority may diverge from the max priority used in the scheduler and defined by MaxNodeScore,
@@ -856,9 +859,9 @@ func prioritizeNodes(
 		}
 	}
 
-	if loggerVTen.Enabled() {
+	if decisionLogsEnabled {
 		for i := range nodesScores {
-			loggerVTen.Info("Calculated node's final score for pod", "pod", klog.KObj(pod), "node", nodesScores[i].Name, "score", nodesScores[i].TotalScore)
+			logger.Info("Calculated node's final score for pod", "profile", profileName, "pod", klog.KObj(pod), "node", nodesScores[i].Name, "score", nodesScores[i].TotalScore)
 		}
 	}
 	return nodesScores, nil
