@@ -26,6 +26,7 @@ import (
 	goruntime "runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,6 +73,8 @@ import (
 	st "k8s.io/kubernetes/pkg/scheduler/testing"
 	tf "k8s.io/kubernetes/pkg/scheduler/testing/framework"
 	schedutil "k8s.io/kubernetes/pkg/scheduler/util"
+	testktesting "k8s.io/kubernetes/test/utils/ktesting"
+	"k8s.io/kubernetes/test/utils/ktesting/initoption"
 	"k8s.io/utils/ptr"
 )
 
@@ -3837,6 +3840,83 @@ func Test_prioritizeNodes(t *testing.T) {
 
 			if diff := cmp.Diff(test.want, nodesscores); diff != "" {
 				t.Errorf("returned nodes scores (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestPrioritizeNodesDecisionLogs(t *testing.T) {
+	metrics.Register()
+
+	tests := []struct {
+		name         string
+		profileName  string
+		wantDecision bool
+	}{
+		{
+			name:         "emits decision logs for better-scheduler",
+			profileName:  detailedScoreLoggingProfile,
+			wantDecision: true,
+		},
+		{
+			name:         "does not emit decision logs for other profiles",
+			profileName:  "default-better-scheduler",
+			wantDecision: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tCtx := testktesting.Init(t, initoption.BufferLogs(true))
+			client := clientsetfake.NewClientset()
+			informerFactory := informers.NewSharedInformerFactory(client, 0)
+			cache := internalcache.New(tCtx, 0)
+			nodes := []*v1.Node{
+				makeNode("node1", 1000, schedutil.DefaultMemoryRequest*10),
+				makeNode("node2", 1000, schedutil.DefaultMemoryRequest*10),
+			}
+			for _, node := range nodes {
+				cache.AddNode(klog.FromContext(tCtx), node)
+			}
+			snapshot := internalcache.NewEmptySnapshot()
+			if err := cache.UpdateSnapshot(klog.FromContext(tCtx), snapshot); err != nil {
+				t.Fatal(err)
+			}
+
+			fwk, err := tf.NewFramework(
+				tCtx,
+				[]tf.RegisterPluginFunc{
+					tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
+					tf.RegisterScorePlugin("Node2Prioritizer", tf.NewNode2PrioritizerPlugin(), 1),
+					tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
+				},
+				test.profileName,
+				frameworkruntime.WithInformerFactory(informerFactory),
+				frameworkruntime.WithSnapshotSharedLister(snapshot),
+				frameworkruntime.WithClientSet(client),
+			)
+			if err != nil {
+				t.Fatalf("error creating framework: %+v", err)
+			}
+
+			_, err = prioritizeNodes(tCtx, nil, fwk, framework.NewCycleState(), &v1.Pod{}, tf.BuildNodeInfos(nodes))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			output := tCtx.Logger().GetSink().(testktesting.Underlier).GetBuffer().String()
+			hasPluginLog := strings.Contains(output, "Plugin scored node for pod")
+			hasFinalLog := strings.Contains(output, "Calculated node's final score for pod")
+			hasProfile := strings.Contains(output, fmt.Sprintf("profile=%q", detailedScoreLoggingProfile))
+
+			if test.wantDecision {
+				if !hasPluginLog || !hasFinalLog || !hasProfile {
+					t.Fatalf("expected decision logs for profile %q, got:\n%s", test.profileName, output)
+				}
+				return
+			}
+			if hasPluginLog || hasFinalLog {
+				t.Fatalf("did not expect decision logs for profile %q, got:\n%s", test.profileName, output)
 			}
 		})
 	}
