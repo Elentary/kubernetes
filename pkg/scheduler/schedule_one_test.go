@@ -3484,6 +3484,140 @@ func TestPrioritizeNodesDecisionLogs(t *testing.T) {
 	}
 }
 
+func TestFindNodesThatFitPodDecisionLogs(t *testing.T) {
+	metrics.Register()
+
+	tests := []struct {
+		name            string
+		profileName     string
+		registerPlugins []tf.RegisterPluginFunc
+		nodes           []*v1.Node
+		pod             *v1.Pod
+		wantSubstrings  []string
+		avoidSubstrings []string
+	}{
+		{
+			name:        "emits filter rejection logs and summary for better-scheduler",
+			profileName: detailedScoreLoggingProfile,
+			registerPlugins: []tf.RegisterPluginFunc{
+				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
+				tf.RegisterFilterPlugin("TrueFilter", tf.NewTrueFilterPlugin),
+				tf.RegisterFilterPlugin("MatchFilter", tf.NewMatchFilterPlugin),
+				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
+			},
+			nodes: makeNodeList([]string{"3", "2", "1"}),
+			pod:   st.MakePod().Name("1").UID("1").Obj(),
+			wantSubstrings: []string{
+				"Rejected node for pod",
+				"phase=\"Filter\"",
+				"node=\"2\"",
+				"plugin=\"MatchFilter\"",
+				"Scheduling rejection reason summary for pod",
+				"nodes=2",
+				"Scheduling decision summary for pod",
+				fmt.Sprintf("profile=%q", detailedScoreLoggingProfile),
+				"cluster_nodes=3",
+				"prefilter_candidate_nodes=3",
+				"prefilter_pruned_nodes=0",
+				"evaluated_candidate_nodes=3",
+				"unevaluated_candidate_nodes=0",
+				"filter_rejected_nodes=2",
+				"extender_rejected_nodes=0",
+				"feasible_nodes=1",
+				"scored_nodes=0",
+			},
+		},
+		{
+			name:        "does not emit infeasible decision logs for other profiles",
+			profileName: "default-better-scheduler",
+			registerPlugins: []tf.RegisterPluginFunc{
+				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
+				tf.RegisterFilterPlugin("TrueFilter", tf.NewTrueFilterPlugin),
+				tf.RegisterFilterPlugin("MatchFilter", tf.NewMatchFilterPlugin),
+				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
+			},
+			nodes: makeNodeList([]string{"3", "2", "1"}),
+			pod:   st.MakePod().Name("1").UID("1").Obj(),
+			avoidSubstrings: []string{
+				"Rejected node for pod",
+				"Scheduling rejection reason summary for pod",
+				"Scheduling decision summary for pod",
+			},
+		},
+		{
+			name:        "emits synthetic prefilter rejection logs for pruned nodes",
+			profileName: detailedScoreLoggingProfile,
+			registerPlugins: []tf.RegisterPluginFunc{
+				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
+				tf.RegisterPreFilterPlugin(
+					"FakePreFilter",
+					tf.NewFakePreFilterPlugin("FakePreFilter", &framework.PreFilterResult{NodeNames: sets.New("node2")}, nil),
+				),
+				tf.RegisterFilterPlugin("TrueFilter", tf.NewTrueFilterPlugin),
+				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
+			},
+			nodes: makeNodeList([]string{"node1", "node2", "node3"}),
+			pod:   st.MakePod().Name("prefilter").UID("prefilter").Obj(),
+			wantSubstrings: []string{
+				"Rejected node for pod",
+				"phase=\"PreFilter\"",
+				"node=\"node1\"",
+				"node=\"node3\"",
+				"synthetic=true",
+				"reason=\"node(s) didn't satisfy plugin(s) [FakePreFilter]\"",
+				"Scheduling decision summary for pod",
+				"cluster_nodes=3",
+				"prefilter_candidate_nodes=1",
+				"prefilter_pruned_nodes=2",
+				"evaluated_candidate_nodes=1",
+				"unevaluated_candidate_nodes=0",
+				"filter_rejected_nodes=0",
+				"extender_rejected_nodes=0",
+				"feasible_nodes=1",
+				"scored_nodes=0",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tCtx := testktesting.Init(t, initoption.BufferLogs(true))
+			scheduler := &Scheduler{
+				nodeInfoSnapshot:         internalcache.NewSnapshot(nil, test.nodes),
+				percentageOfNodesToScore: schedulerapi.DefaultPercentageOfNodesToScore,
+			}
+			scheduler.applyDefaultHandlers()
+
+			fwk, err := tf.NewFramework(
+				tCtx,
+				test.registerPlugins,
+				test.profileName,
+				frameworkruntime.WithPodNominator(internalqueue.NewTestQueue(tCtx, nil)),
+			)
+			if err != nil {
+				t.Fatalf("error creating framework: %+v", err)
+			}
+
+			_, _, err = scheduler.findNodesThatFitPod(tCtx, fwk, framework.NewCycleState(), test.pod)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			output := tCtx.Logger().GetSink().(testktesting.Underlier).GetBuffer().String()
+			for _, want := range test.wantSubstrings {
+				if !strings.Contains(output, want) {
+					t.Fatalf("expected log output to contain %q, got:\n%s", want, output)
+				}
+			}
+			for _, avoid := range test.avoidSubstrings {
+				if strings.Contains(output, avoid) {
+					t.Fatalf("did not expect log output to contain %q, got:\n%s", avoid, output)
+				}
+			}
+		})
+	}
+}
+
 var lowPriority, midPriority, highPriority = int32(0), int32(100), int32(1000)
 
 func TestNumFeasibleNodesToFind(t *testing.T) {
