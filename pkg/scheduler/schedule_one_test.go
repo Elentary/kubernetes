@@ -3461,7 +3461,10 @@ func TestPrioritizeNodesDecisionLogs(t *testing.T) {
 				t.Fatalf("error creating framework: %+v", err)
 			}
 
-			_, err = prioritizeNodes(tCtx, nil, fwk, framework.NewCycleState(), &v1.Pod{}, tf.BuildNodeInfos(nodes))
+			pod := st.MakePod().Namespace("team-a").Name("train-42").UID("decision-123").Obj()
+			state := framework.NewCycleState()
+			state.Write(schedulingDecisionAttemptStateKey, &schedulingDecisionAttemptState{attempt: 7})
+			_, err = prioritizeNodes(tCtx, nil, fwk, state, pod, tf.BuildNodeInfos(nodes))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -3470,9 +3473,11 @@ func TestPrioritizeNodesDecisionLogs(t *testing.T) {
 			hasPluginLog := strings.Contains(output, "Plugin scored node for pod")
 			hasFinalLog := strings.Contains(output, "Calculated node's final score for pod")
 			hasProfile := strings.Contains(output, fmt.Sprintf("profile=%q", detailedScoreLoggingProfile))
+			hasDecisionID := strings.Contains(output, "decisionID=\"decision-123\"")
+			hasAttempt := strings.Contains(output, "attempt=7")
 
 			if test.wantDecision {
-				if !hasPluginLog || !hasFinalLog || !hasProfile {
+				if !hasPluginLog || !hasFinalLog || !hasProfile || !hasDecisionID || !hasAttempt {
 					t.Fatalf("expected decision logs for profile %q, got:\n%s", test.profileName, output)
 				}
 				return
@@ -3515,6 +3520,8 @@ func TestFindNodesThatFitPodDecisionLogs(t *testing.T) {
 				"Scheduling rejection reason summary for pod",
 				"nodes=2",
 				"Scheduling decision summary for pod",
+				"decisionID=\"1\"",
+				"attempt=5",
 				fmt.Sprintf("profile=%q", detailedScoreLoggingProfile),
 				"cluster_nodes=3",
 				"prefilter_candidate_nodes=3",
@@ -3566,6 +3573,8 @@ func TestFindNodesThatFitPodDecisionLogs(t *testing.T) {
 				"synthetic=true",
 				"reason=\"node(s) didn't satisfy plugin(s) [FakePreFilter]\"",
 				"Scheduling decision summary for pod",
+				"decisionID=\"prefilter\"",
+				"attempt=5",
 				"cluster_nodes=3",
 				"prefilter_candidate_nodes=1",
 				"prefilter_pruned_nodes=2",
@@ -3598,7 +3607,9 @@ func TestFindNodesThatFitPodDecisionLogs(t *testing.T) {
 				t.Fatalf("error creating framework: %+v", err)
 			}
 
-			_, _, err = scheduler.findNodesThatFitPod(tCtx, fwk, framework.NewCycleState(), test.pod)
+			state := framework.NewCycleState()
+			state.Write(schedulingDecisionAttemptStateKey, &schedulingDecisionAttemptState{attempt: 5})
+			_, _, err = scheduler.findNodesThatFitPod(tCtx, fwk, state, test.pod)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
