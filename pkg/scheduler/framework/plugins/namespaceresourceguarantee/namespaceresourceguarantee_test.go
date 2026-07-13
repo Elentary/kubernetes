@@ -36,6 +36,7 @@ import (
 	"k8s.io/component-base/metrics/testutil"
 	"k8s.io/klog/v2"
 	ktesting "k8s.io/klog/v2/ktesting"
+	extenderv1 "k8s.io/kube-scheduler/extender/v1"
 	corevalidation "k8s.io/kubernetes/pkg/apis/core/validation"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/backend/cache"
@@ -49,6 +50,8 @@ import (
 	frameworkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
 	tf "k8s.io/kubernetes/pkg/scheduler/testing/framework"
+	testktesting "k8s.io/kubernetes/test/utils/ktesting"
+	"k8s.io/kubernetes/test/utils/ktesting/initoption"
 )
 
 func TestPreFilter(t *testing.T) {
@@ -320,6 +323,108 @@ func TestScore(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPreemptionProtectedGPUPackingScore(t *testing.T) {
+	makeGPUNode := func(name string, gpu string) *v1.Node {
+		node := makeNode(name)
+		node.Status.Allocatable[protectedGPUResource] = resource.MustParse(gpu)
+		return node
+	}
+
+	incoming := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{protectedGPUResource: "1"})
+	survivorA := makePodWithRequests("survivor-a", "team-a", "protected", "node-a", map[v1.ResourceName]string{protectedGPUResource: "3"})
+	victimA := makePodWithRequests("victim-a", "team-b", "protected", "node-a", map[v1.ResourceName]string{protectedGPUResource: "2"})
+	survivorB := makePodWithRequests("survivor-b", "team-a", "protected", "node-b", map[v1.ResourceName]string{protectedGPUResource: "1"})
+	victimB := makePodWithRequests("victim-b", "team-b", "normal", "node-b", map[v1.ResourceName]string{protectedGPUResource: "2"})
+
+	plugin := plugintesting.SetupPlugin(
+		context.Background(),
+		t,
+		New,
+		ptrTo(newArgs(map[string]v1.ResourceList{"team-a": {protectedGPUResource: resource.MustParse("8")}})),
+		internalcache.NewSnapshot([]*v1.Pod{survivorA, victimA, survivorB, victimB}, []*v1.Node{makeGPUNode("node-a", "8"), makeGPUNode("node-b", "8")}),
+	).(*NamespaceResourceGuarantee)
+
+	scoreA, ok := plugin.preemptionProtectedGPUPackingScore(incoming, "node-a", &extenderv1.Victims{Pods: []*v1.Pod{victimA}})
+	if !ok {
+		t.Fatal("expected node-a preemption packing score")
+	}
+	if scoreA.protectedGPUBefore != 5 || scoreA.protectedGPUAfterVictims != 3 || scoreA.protectedGPUAfterScheduling != 4 || scoreA.score != 50 {
+		t.Fatalf("unexpected node-a score details: %#v", scoreA)
+	}
+
+	scoreFuncs := plugin.OrderedScoreFuncs(context.Background(), incoming, map[string]*extenderv1.Victims{
+		"node-a": {Pods: []*v1.Pod{victimA}},
+		"node-b": {Pods: []*v1.Pod{victimB}},
+	})
+	if len(scoreFuncs) != 1 {
+		t.Fatalf("expected one packing score func, got %d", len(scoreFuncs))
+	}
+	if scoreFuncs[0]("node-a") <= scoreFuncs[0]("node-b") {
+		t.Fatalf("expected node-a to have higher packing score: node-a=%d node-b=%d", scoreFuncs[0]("node-a"), scoreFuncs[0]("node-b"))
+	}
+
+	nonGPUPod := makePodWithRequests("cpu-only", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
+	if got := plugin.OrderedScoreFuncs(context.Background(), nonGPUPod, map[string]*extenderv1.Victims{"node-a": {Pods: []*v1.Pod{victimA}}}); got != nil {
+		t.Fatalf("expected no packing score funcs for non-GPU pod, got %d", len(got))
+	}
+}
+
+func TestLogPreemptionDecisionEmitsCandidateScoreLogs(t *testing.T) {
+	tCtx := testktesting.Init(t, initoption.BufferLogs(true))
+	recorder := clientgoevents.NewFakeRecorder(4)
+	fh, err := frameworkruntime.NewFramework(tCtx, nil, nil, frameworkruntime.WithEventRecorder(recorder))
+	if err != nil {
+		t.Fatalf("Failed creating framework runtime: %v", err)
+	}
+
+	plugin := &NamespaceResourceGuarantee{handle: fh}
+	pod := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{protectedGPUResource: "1"})
+	victim := makePodWithRequests("victim", "team-b", "normal", "node-a", map[v1.ResourceName]string{protectedGPUResource: "1"})
+	state := framework.NewCycleState()
+	framework.WriteSchedulingDecisionAttempt(state, 9)
+	trace := &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{
+		"node-a": {
+			nodeName:              "node-a",
+			statusCode:            framework.Success,
+			numPDBViolatingVictim: 1,
+			victims:               []*v1.Pod{victim},
+			packingScore: &preemptionCandidatePackingScore{
+				score:                       50,
+				incomingGPU:                 1,
+				allocatableGPU:              8,
+				protectedGPUBefore:          5,
+				protectedGPUAfterVictims:    3,
+				protectedGPUAfterScheduling: 4,
+			},
+		},
+	}}
+	plugin.preemptionTrace.Store(pod.UID, trace)
+	defer plugin.preemptionTrace.Delete(pod.UID)
+
+	plugin.logPreemptionDecision(tCtx, state, pod, framework.NewPostFilterResultWithNominatedNode("node-a"), framework.NewStatus(framework.Success))
+
+	output := tCtx.Logger().GetSink().(testktesting.Underlier).GetBuffer().String()
+	wantSubstrings := []string{
+		"Preemption candidate scored for pod",
+		"Preemption candidate selected for pod",
+		"profile=\"better-scheduler\"",
+		"decisionID=\"incoming-uid\"",
+		"attempt=9",
+		"node=\"node-a\"",
+		"score=50",
+		"score_name=\"ProtectedGPUPacking\"",
+		"incoming_gpu=1",
+		"protected_gpu_after_victims=3",
+		"selected=true",
+		"selection_path=\"preemption\"",
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected log output to contain %q, got:\n%s", want, output)
+		}
 	}
 }
 
@@ -687,7 +792,7 @@ func TestLogPreemptionDecisionEmitsEvent(t *testing.T) {
 	plugin.preemptionTrace.Store(pod.UID, trace)
 	defer plugin.preemptionTrace.Delete(pod.UID)
 
-	plugin.logPreemptionDecision(context.Background(), pod, nil, framework.NewStatus(framework.Unschedulable, preemptionWaitingOnTerminatingVictims))
+	plugin.logPreemptionDecision(context.Background(), framework.NewCycleState(), pod, nil, framework.NewStatus(framework.Unschedulable, preemptionWaitingOnTerminatingVictims))
 
 	select {
 	case event := <-recorder.Events:

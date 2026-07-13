@@ -288,7 +288,7 @@ func (pl *DefaultPreemption) PodEligibleToPreemptOthers(_ context.Context, pod *
 }
 
 // OrderedScoreFuncs returns a list of ordered score functions to select preferable node where victims will be preempted.
-func (pl *DefaultPreemption) OrderedScoreFuncs(ctx context.Context, nodesToVictims map[string]*extenderv1.Victims) []func(node string) int64 {
+func (pl *DefaultPreemption) OrderedScoreFuncs(ctx context.Context, pod *v1.Pod, nodesToVictims map[string]*extenderv1.Victims) []func(node string) int64 {
 	return nil
 }
 

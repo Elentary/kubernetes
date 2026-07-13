@@ -1454,7 +1454,7 @@ func TestSelectBestCandidate(t *testing.T) {
 			}
 			offset, numCandidates := pl.GetOffsetAndNumCandidates(int32(len(nodeInfos)))
 			candidates, _, _ := pe.DryRunPreemption(ctx, state, tt.pod, nodeInfos, nil, offset, numCandidates)
-			s := pe.SelectCandidate(ctx, candidates)
+			s := pe.SelectCandidate(ctx, tt.pod, candidates)
 			if s == nil || len(s.Name()) == 0 {
 				return
 			}

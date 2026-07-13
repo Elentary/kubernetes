@@ -65,8 +65,6 @@ const (
 	detailedScoreLoggingProfile = "better-scheduler"
 )
 
-const schedulingDecisionAttemptStateKey framework.StateKey = "schedulingDecisionAttempt"
-
 // ScheduleOne does the entire scheduling workflow for a single pod. It is serialized on the scheduling algorithm's host fitting.
 func (sched *Scheduler) ScheduleOne(ctx context.Context) {
 	logger := klog.FromContext(ctx)
@@ -112,7 +110,7 @@ func (sched *Scheduler) ScheduleOne(ctx context.Context) {
 	// Initialize an empty podsToActivate struct, which will be filled up by plugins or stay empty.
 	podsToActivate := framework.NewPodsToActivate()
 	state.Write(framework.PodsToActivateKey, podsToActivate)
-	state.Write(schedulingDecisionAttemptStateKey, &schedulingDecisionAttemptState{attempt: podInfo.Attempts})
+	framework.WriteSchedulingDecisionAttempt(state, podInfo.Attempts)
 
 	schedulingCycleCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -704,14 +702,6 @@ type schedulingRejectionSummaryKey struct {
 	synthetic bool
 }
 
-type schedulingDecisionAttemptState struct {
-	attempt int
-}
-
-func (s *schedulingDecisionAttemptState) Clone() framework.StateData {
-	return &schedulingDecisionAttemptState{attempt: s.attempt}
-}
-
 type schedulingDecisionLogContext struct {
 	profileName string
 	decisionID  string
@@ -724,12 +714,7 @@ func schedulingDecisionLogsEnabled(fwk framework.Framework) bool {
 }
 
 func newSchedulingDecisionLogContext(profileName string, pod *v1.Pod, state *framework.CycleState) schedulingDecisionLogContext {
-	attempt := 0
-	if state != nil {
-		if data, err := state.Read(schedulingDecisionAttemptStateKey); err == nil {
-			attempt = data.(*schedulingDecisionAttemptState).attempt
-		}
-	}
+	attempt := framework.SchedulingDecisionAttemptFromState(state)
 	return schedulingDecisionLogContext{
 		profileName: profileName,
 		decisionID:  string(pod.UID),
