@@ -1,0 +1,1072 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Decision Trace",
+      "type": "logs",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `profile=\"better-scheduler\"` |~ `Plugin scored node for pod|Extender scored node for pod|Calculated node's final score for pod|Rejected node for pod|Scheduling rejection reason summary for pod|Scheduling decision summary for pod` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}`",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "editorMode": "code",
+          "direction": "backward"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending",
+        "prettifyLogMessage": false,
+        "enableInfiniteScrolling": false,
+        "showControls": false,
+        "unwrappedColumns": false
+      },
+      "pluginVersion": "12.4.3"
+    },
+    {
+      "id": 2,
+      "title": "Final Node Scores",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (node) (max_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Calculated node's final score for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | label_format node=`{{.node}}` | unwrap score [$__range]))",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        }
+      },
+      "pluginVersion": "12.4.3",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "continuous-BlYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 25
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 75
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Final Node Plugin Breakdown",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (plugin) (max_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Plugin scored node for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | node = `${final_node}` | label_format plugin=`{{.plugin}}` | unwrap score [$__range]))",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "{{plugin}}"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        }
+      },
+      "pluginVersion": "12.4.3",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 25
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 75
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Final Node Extender Breakdown",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (extender) (max_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Extender scored node for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | node = `${final_node}` | label_format extender=`{{.extender}}` | unwrap score [$__range]))",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "{{extender}}"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        }
+      },
+      "pluginVersion": "12.4.3",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 25
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 75
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Scored Candidate Count",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Calculated node's final score for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` [$__range]))",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "editorMode": "code",
+          "direction": "backward"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "enableInfiniteScrolling": false,
+        "showControls": false,
+        "unwrappedColumns": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "pluginVersion": "12.4.3"
+    },
+    {
+      "id": 6,
+      "title": "Actual Bound Node",
+      "type": "table",
+      "gridPos": {
+        "x": 18,
+        "y": 18,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kube_pod_info{namespace=\"$workload_ns\", pod=\"$workload_pod\"}",
+          "instant": true,
+          "range": false,
+          "format": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom_ds}"
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "container": true,
+              "created_by_kind": true,
+              "created_by_name": true,
+              "host_ip": true,
+              "pod_ip": true,
+              "uid": true
+            },
+            "renameByName": {
+              "node": "node",
+              "namespace": "namespace",
+              "pod": "pod"
+            },
+            "indexByName": {
+              "namespace": 0,
+              "pod": 1,
+              "node": 2
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "title": "Decision Summary Counts",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,cluster_nodes | unwrap cluster_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Cluster Nodes",
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,prefilter_candidate_nodes | unwrap prefilter_candidate_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Candidate Nodes",
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,prefilter_pruned_nodes | unwrap prefilter_pruned_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Prefilter Pruned",
+          "editorMode": "code"
+        },
+        {
+          "refId": "D",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,filter_rejected_nodes | unwrap filter_rejected_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Filter Rejected",
+          "editorMode": "code"
+        },
+        {
+          "refId": "E",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,extender_rejected_nodes | unwrap extender_rejected_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Extender Rejected",
+          "editorMode": "code"
+        },
+        {
+          "refId": "F",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,unevaluated_candidate_nodes | unwrap unevaluated_candidate_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Unevaluated Candidates",
+          "editorMode": "code"
+        },
+        {
+          "refId": "G",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,feasible_nodes | unwrap feasible_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Feasible Nodes",
+          "editorMode": "code"
+        },
+        {
+          "refId": "H",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,scored_nodes | unwrap scored_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Scored Nodes",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "legend": {
+          "showLegend": false
+        }
+      },
+      "pluginVersion": "12.4.3",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "continuous-BlPu"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "title": "Why Nodes Dropped Out",
+      "type": "piechart",
+      "gridPos": {
+        "x": 12,
+        "y": 26,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,prefilter_pruned_nodes | unwrap prefilter_pruned_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Prefilter Pruned",
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,filter_rejected_nodes | unwrap filter_rejected_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Filter Rejected",
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,extender_rejected_nodes | unwrap extender_rejected_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Extender Rejected",
+          "editorMode": "code"
+        },
+        {
+          "refId": "D",
+          "expr": "last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling decision summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | keep pod_extracted,profile,unevaluated_candidate_nodes | unwrap unevaluated_candidate_nodes [$__range])",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "Unevaluated Candidates",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "displayLabels": [
+          "name",
+          "value",
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.4.3",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 13,
+      "title": "Latest Rejection Reasons",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 12,
+        "h": 10
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(12, max by (reason_label) (last_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Scheduling rejection reason summary for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | label_format reason_label=`{{.phase}} / {{.plugin}} / {{.reason}}` | unwrap nodes [$__range])))",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "{{reason_label}}",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "legend": {
+          "showLegend": false
+        }
+      },
+      "pluginVersion": "12.4.3",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "title": "Rejected Nodes Drilldown",
+      "type": "logs",
+      "gridPos": {
+        "x": 12,
+        "y": 34,
+        "w": 12,
+        "h": 10
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Rejected node for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}`",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "editorMode": "code",
+          "direction": "backward"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending",
+        "prettifyLogMessage": false,
+        "enableInfiniteScrolling": false,
+        "showControls": false,
+        "unwrappedColumns": false
+      },
+      "pluginVersion": "12.4.3",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Score Plugin p95 Latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, plugin) (rate(scheduler_plugin_execution_duration_seconds_bucket{profile=\"better-scheduler\", extension_point=\"Score\"}[$__rate_interval])))",
+          "legendFormat": "{{plugin}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom_ds}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Extension Point p95 Latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, extension_point) (rate(scheduler_framework_extension_point_duration_seconds_bucket{profile=\"better-scheduler\"}[$__rate_interval])))",
+          "legendFormat": "{{extension_point}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom_ds}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Scheduling Attempts by Result",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(scheduler_schedule_attempts_total{profile=\"better-scheduler\"}[$__rate_interval]))",
+          "legendFormat": "{{result}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom_ds}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Pending Pods by Queue",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 52,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (queue) (scheduler_pending_pods)",
+          "legendFormat": "{{queue}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom_ds}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 42,
+  "style": "dark",
+  "tags": [
+    "better-scheduler",
+    "kube-scheduler",
+    "loki",
+    "prometheus"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "loki_ds",
+        "label": "Loki",
+        "type": "datasource",
+        "query": "loki",
+        "refresh": 1,
+        "hide": 0,
+        "current": {
+          "selected": true,
+          "text": "",
+          "value": ""
+        },
+        "options": []
+      },
+      {
+        "name": "prom_ds",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1,
+        "hide": 0,
+        "current": {
+          "selected": true,
+          "text": "",
+          "value": ""
+        },
+        "options": []
+      },
+      {
+        "name": "workload_ns",
+        "label": "Workload Namespace",
+        "type": "textbox",
+        "hide": 0,
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "options": []
+      },
+      {
+        "name": "workload_pod",
+        "label": "Workload Pod",
+        "type": "textbox",
+        "hide": 0,
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "options": []
+      },
+      {
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${prom_ds}"
+        },
+        "definition": "label_values(kube_pod_info{namespace=\"$workload_ns\", pod=\"$workload_pod\"}, node)",
+        "label": "Final Node",
+        "name": "final_node",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(kube_pod_info{namespace=\"$workload_ns\", pod=\"$workload_pod\"}, node)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery-final-node"
+        },
+        "refresh": 2,
+        "regex": "",
+        "regexApplyTo": "value",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "name": "scheduler_pod",
+        "label": "Scheduler Pod",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "${loki_ds}"
+        },
+        "definition": "label_values({namespace=\"better-scheduler\"}, pod)",
+        "query": "label_values({namespace=\"better-scheduler\"}, pod)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "sort": 1,
+        "options": []
+      },
+      {
+        "name": "attempt",
+        "label": "Attempt",
+        "type": "textbox",
+        "hide": 0,
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "query": "",
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ]
+      }
+    ]
+  },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Better Scheduler Decision Explainability",
+  "uid": "better-scheduler-decision-explainability",
+  "version": 10,
+  "weekStart": ""
+}

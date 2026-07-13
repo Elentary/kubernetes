@@ -66,6 +66,8 @@ const (
 	detailedScoreLoggingProfile = "better-scheduler"
 )
 
+const schedulingDecisionAttemptStateKey framework.StateKey = "schedulingDecisionAttempt"
+
 // ScheduleOne does the entire scheduling workflow for a single pod. It is serialized on the scheduling algorithm's host fitting.
 func (sched *Scheduler) ScheduleOne(ctx context.Context) {
 	logger := klog.FromContext(ctx)
@@ -114,6 +116,7 @@ func (sched *Scheduler) ScheduleOne(ctx context.Context) {
 	// Initialize an empty podsToActivate struct, which will be filled up by plugins or stay empty.
 	podsToActivate := framework.NewPodsToActivate()
 	state.Write(framework.PodsToActivateKey, podsToActivate)
+	state.Write(schedulingDecisionAttemptStateKey, &schedulingDecisionAttemptState{attempt: podInfo.Attempts})
 
 	schedulingCycleCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -487,6 +490,7 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, schedFramework 
 	logger := klog.FromContext(ctx)
 	profileName := fwk.ProfileName()
 	decisionLogsEnabled := schedulingDecisionLogsEnabled(fwk)
+	decisionLogCtx := newSchedulingDecisionLogContext(profileName, pod, state)
 	diagnosis := framework.Diagnosis{
 		NodeToStatus: framework.NewDefaultNodeToStatus(),
 	}
@@ -515,21 +519,22 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, schedFramework 
 			for _, nodeInfo := range allNodes {
 				rejections = appendSchedulingRejection(rejections, "PreFilter", nodeInfo.Node().Name, s, true)
 			}
-			logSchedulingRejections(logger, profileName, pod, rejections)
-			logSchedulingRejectionReasonSummary(logger, profileName, pod, rejections)
+			logSchedulingRejections(logger, decisionLogCtx, rejections)
+			logSchedulingRejectionReasonSummary(logger, decisionLogCtx, rejections)
 			logger.Info(
 				"Scheduling decision summary for pod",
-				"profile", profileName,
-				"pod", klog.KObj(pod),
-				"cluster_nodes", len(allNodes),
-				"prefilter_candidate_nodes", 0,
-				"prefilter_pruned_nodes", len(allNodes),
-				"evaluated_candidate_nodes", 0,
-				"unevaluated_candidate_nodes", 0,
-				"filter_rejected_nodes", 0,
-				"extender_rejected_nodes", 0,
-				"feasible_nodes", 0,
-				"scored_nodes", 0,
+				append(
+					decisionLogCtx.keyvals(),
+					"cluster_nodes", len(allNodes),
+					"prefilter_candidate_nodes", 0,
+					"prefilter_pruned_nodes", len(allNodes),
+					"evaluated_candidate_nodes", 0,
+					"unevaluated_candidate_nodes", 0,
+					"filter_rejected_nodes", 0,
+					"extender_rejected_nodes", 0,
+					"feasible_nodes", 0,
+					"scored_nodes", 0,
+				)...,
 			)
 		}
 		return nil, diagnosis, nil
@@ -574,8 +579,8 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, schedFramework 
 				}
 				prefilterRejections = appendSchedulingRejection(prefilterRejections, "PreFilter", nodeName, diagnosis.NodeToStatus.AbsentNodesStatus(), true)
 			}
-			logSchedulingRejections(logger, profileName, pod, prefilterRejections)
-			logSchedulingRejectionReasonSummary(logger, profileName, pod, prefilterRejections)
+			logSchedulingRejections(logger, decisionLogCtx, prefilterRejections)
+			logSchedulingRejectionReasonSummary(logger, decisionLogCtx, prefilterRejections)
 		}
 	}
 	feasibleNodes, err := sched.findNodesThatPassFilters(ctx, fwk, state, pod, &diagnosis, nodes)
@@ -590,8 +595,8 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, schedFramework 
 		diagnosis.NodeToStatus.ForEachExplicitNode(func(nodeName string, status *framework.Status) {
 			filterRejections = appendSchedulingRejection(filterRejections, "Filter", nodeName, status, false)
 		})
-		logSchedulingRejections(logger, profileName, pod, filterRejections)
-		logSchedulingRejectionReasonSummary(logger, profileName, pod, filterRejections)
+		logSchedulingRejections(logger, decisionLogCtx, filterRejections)
+		logSchedulingRejectionReasonSummary(logger, decisionLogCtx, filterRejections)
 	}
 	// always try to update the sched.nextStartNodeIndex regardless of whether an error has occurred
 	// this is helpful to make sure that all the nodes have a chance to be searched
@@ -618,8 +623,8 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, schedFramework 
 			}
 			extenderRejections = appendSchedulingRejection(extenderRejections, "Extender", nodeName, status, false)
 		})
-		logSchedulingRejections(logger, profileName, pod, extenderRejections)
-		logSchedulingRejectionReasonSummary(logger, profileName, pod, extenderRejections)
+		logSchedulingRejections(logger, decisionLogCtx, extenderRejections)
+		logSchedulingRejectionReasonSummary(logger, decisionLogCtx, extenderRejections)
 	}
 	if len(feasibleNodesAfterExtender) != len(feasibleNodes) {
 		// Extenders filtered out some nodes.
@@ -642,17 +647,18 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, schedFramework 
 		}
 		logger.Info(
 			"Scheduling decision summary for pod",
-			"profile", profileName,
-			"pod", klog.KObj(pod),
-			"cluster_nodes", len(allNodes),
-			"prefilter_candidate_nodes", len(nodes),
-			"prefilter_pruned_nodes", prefilterPrunedNodes,
-			"evaluated_candidate_nodes", evaluatedCandidateNodes,
-			"unevaluated_candidate_nodes", unevaluatedCandidateNodes,
-			"filter_rejected_nodes", filterRejectedNodes,
-			"extender_rejected_nodes", extenderRejectedNodes,
-			"feasible_nodes", len(feasibleNodesAfterExtender),
-			"scored_nodes", scoredNodes,
+			append(
+				decisionLogCtx.keyvals(),
+				"cluster_nodes", len(allNodes),
+				"prefilter_candidate_nodes", len(nodes),
+				"prefilter_pruned_nodes", prefilterPrunedNodes,
+				"evaluated_candidate_nodes", evaluatedCandidateNodes,
+				"unevaluated_candidate_nodes", unevaluatedCandidateNodes,
+				"filter_rejected_nodes", filterRejectedNodes,
+				"extender_rejected_nodes", extenderRejectedNodes,
+				"feasible_nodes", len(feasibleNodesAfterExtender),
+				"scored_nodes", scoredNodes,
+			)...,
 		)
 	}
 
@@ -717,8 +723,47 @@ type schedulingRejectionSummaryKey struct {
 	synthetic bool
 }
 
+type schedulingDecisionAttemptState struct {
+	attempt int
+}
+
+func (s *schedulingDecisionAttemptState) Clone() framework.StateData {
+	return &schedulingDecisionAttemptState{attempt: s.attempt}
+}
+
+type schedulingDecisionLogContext struct {
+	profileName string
+	decisionID  string
+	attempt     int
+	pod         *v1.Pod
+}
+
 func schedulingDecisionLogsEnabled(fwk framework.Framework) bool {
 	return fwk.ProfileName() == detailedScoreLoggingProfile
+}
+
+func newSchedulingDecisionLogContext(profileName string, pod *v1.Pod, state *framework.CycleState) schedulingDecisionLogContext {
+	attempt := 0
+	if state != nil {
+		if data, err := state.Read(schedulingDecisionAttemptStateKey); err == nil {
+			attempt = data.(*schedulingDecisionAttemptState).attempt
+		}
+	}
+	return schedulingDecisionLogContext{
+		profileName: profileName,
+		decisionID:  string(pod.UID),
+		attempt:     attempt,
+		pod:         pod,
+	}
+}
+
+func (c schedulingDecisionLogContext) keyvals() []interface{} {
+	return []interface{}{
+		"profile", c.profileName,
+		"decisionID", c.decisionID,
+		"attempt", c.attempt,
+		"pod", klog.KObj(c.pod),
+	}
 }
 
 func appendSchedulingRejection(rejections []schedulingRejectionLog, phase, nodeName string, status *framework.Status, synthetic bool) []schedulingRejectionLog {
@@ -733,7 +778,7 @@ func appendSchedulingRejection(rejections []schedulingRejectionLog, phase, nodeN
 	})
 }
 
-func logSchedulingRejections(logger klog.Logger, profileName string, pod *v1.Pod, rejections []schedulingRejectionLog) {
+func logSchedulingRejections(logger klog.Logger, decisionLogCtx schedulingDecisionLogContext, rejections []schedulingRejectionLog) {
 	if len(rejections) == 0 {
 		return
 	}
@@ -748,19 +793,20 @@ func logSchedulingRejections(logger klog.Logger, profileName string, pod *v1.Pod
 	for _, rejection := range rejections {
 		logger.Info(
 			"Rejected node for pod",
-			"profile", profileName,
-			"pod", klog.KObj(pod),
-			"phase", rejection.phase,
-			"node", rejection.node,
-			"status", rejection.status.Code().String(),
-			"plugin", rejection.status.Plugin(),
-			"reason", rejection.status.Message(),
-			"synthetic", rejection.synthetic,
+			append(
+				decisionLogCtx.keyvals(),
+				"phase", rejection.phase,
+				"node", rejection.node,
+				"status", rejection.status.Code().String(),
+				"plugin", rejection.status.Plugin(),
+				"reason", rejection.status.Message(),
+				"synthetic", rejection.synthetic,
+			)...,
 		)
 	}
 }
 
-func logSchedulingRejectionReasonSummary(logger klog.Logger, profileName string, pod *v1.Pod, rejections []schedulingRejectionLog) {
+func logSchedulingRejectionReasonSummary(logger klog.Logger, decisionLogCtx schedulingDecisionLogContext, rejections []schedulingRejectionLog) {
 	if len(rejections) == 0 {
 		return
 	}
@@ -803,14 +849,15 @@ func logSchedulingRejectionReasonSummary(logger klog.Logger, profileName string,
 	for _, key := range keys {
 		logger.Info(
 			"Scheduling rejection reason summary for pod",
-			"profile", profileName,
-			"pod", klog.KObj(pod),
-			"phase", key.phase,
-			"status", key.status,
-			"plugin", key.plugin,
-			"reason", key.reason,
-			"synthetic", key.synthetic,
-			"nodes", counts[key],
+			append(
+				decisionLogCtx.keyvals(),
+				"phase", key.phase,
+				"status", key.status,
+				"plugin", key.plugin,
+				"reason", key.reason,
+				"synthetic", key.synthetic,
+				"nodes", counts[key],
+			)...,
 		)
 	}
 }
@@ -1018,10 +1065,19 @@ func prioritizeNodes(
 
 	profileName := fwk.ProfileName()
 	decisionLogsEnabled := schedulingDecisionLogsEnabled(fwk)
+	decisionLogCtx := newSchedulingDecisionLogContext(profileName, pod, state)
 	if decisionLogsEnabled {
 		for _, nodeScore := range nodesScores {
 			for _, pluginScore := range nodeScore.Scores {
-				logger.Info("Plugin scored node for pod", "profile", profileName, "pod", klog.KObj(pod), "plugin", pluginScore.Name, "node", nodeScore.Name, "score", pluginScore.Score)
+				logger.Info(
+					"Plugin scored node for pod",
+					append(
+						decisionLogCtx.keyvals(),
+						"plugin", pluginScore.Name,
+						"node", nodeScore.Name,
+						"score", pluginScore.Score,
+					)...,
+				)
 			}
 		}
 	}
@@ -1055,7 +1111,15 @@ func prioritizeNodes(
 					nodename := (*prioritizedList)[i].Host
 					score := (*prioritizedList)[i].Score
 					if decisionLogsEnabled {
-						logger.Info("Extender scored node for pod", "profile", profileName, "pod", klog.KObj(pod), "extender", extenders[extIndex].Name(), "node", nodename, "score", score)
+						logger.Info(
+							"Extender scored node for pod",
+							append(
+								decisionLogCtx.keyvals(),
+								"extender", extenders[extIndex].Name(),
+								"node", nodename,
+								"score", score,
+							)...,
+						)
 					}
 
 					// MaxExtenderPriority may diverge from the max priority used in the scheduler and defined by MaxNodeScore,
@@ -1088,7 +1152,14 @@ func prioritizeNodes(
 
 	if decisionLogsEnabled {
 		for i := range nodesScores {
-			logger.Info("Calculated node's final score for pod", "profile", profileName, "pod", klog.KObj(pod), "node", nodesScores[i].Name, "score", nodesScores[i].TotalScore)
+			logger.Info(
+				"Calculated node's final score for pod",
+				append(
+					decisionLogCtx.keyvals(),
+					"node", nodesScores[i].Name,
+					"score", nodesScores[i].TotalScore,
+				)...,
+			)
 		}
 	}
 	return nodesScores, nil
