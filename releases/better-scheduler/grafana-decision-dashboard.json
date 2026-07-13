@@ -38,7 +38,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `profile=\"better-scheduler\"` |~ `Plugin scored node for pod|Extender scored node for pod|Calculated node's final score for pod|Rejected node for pod|Scheduling rejection reason summary for pod|Scheduling decision summary for pod` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}`",
+          "expr": "{namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `profile=\"better-scheduler\"` |~ `Plugin scored node for pod|Extender scored node for pod|Calculated node's final score for pod|Rejected node for pod|Scheduling rejection reason summary for pod|Scheduling decision summary for pod|Preemption candidate scored for pod|Preemption candidate selected for pod` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}`",
           "queryType": "range",
           "datasource": {
             "type": "loki",
@@ -757,12 +757,117 @@
       }
     },
     {
+      "id": 15,
+      "title": "Preemption Candidate Scores",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (node) (max_over_time({namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Preemption candidate scored for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}` | label_format node=`{{.node}}` | unwrap score [$__range]))",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "legendFormat": "{{node}}",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 40
+              },
+              {
+                "color": "green",
+                "value": 70
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "minVizWidth": 0,
+        "minVizHeight": 10
+      }
+    },
+    {
+      "id": 16,
+      "title": "Selected Preemption Candidate",
+      "type": "logs",
+      "gridPos": {
+        "x": 12,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{namespace=\"better-scheduler\", pod=~\"$scheduler_pod\"} |= `Preemption candidate selected for pod` |= `profile=\"better-scheduler\"` | logfmt | pod_extracted = `${workload_ns}/${workload_pod}` | attempt = `${attempt}`",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_ds}"
+          },
+          "editorMode": "code",
+          "direction": "backward"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    },
+    {
       "id": 7,
       "title": "Score Plugin p95 Latency",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 52,
         "w": 12,
         "h": 8
       },
@@ -804,7 +909,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 44,
+        "y": 52,
         "w": 12,
         "h": 8
       },
@@ -846,7 +951,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 52,
+        "y": 60,
         "w": 12,
         "h": 8
       },
@@ -888,7 +993,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 52,
+        "y": 60,
         "w": 12,
         "h": 8
       },
@@ -1067,6 +1172,6 @@
   "timezone": "browser",
   "title": "Better Scheduler Decision Explainability",
   "uid": "better-scheduler-decision-explainability",
-  "version": 10,
+  "version": 11,
   "weekStart": ""
 }

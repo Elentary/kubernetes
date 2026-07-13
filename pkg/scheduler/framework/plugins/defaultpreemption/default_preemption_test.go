@@ -1460,7 +1460,7 @@ func TestSelectBestCandidate(t *testing.T) {
 			}
 			offset, numCandidates := pl.GetOffsetAndNumCandidates(int32(len(nodeInfos)))
 			candidates, _, _ := pl.Evaluator.DryRunPreemption(ctx, state, tt.pod, nodeInfos, nil, offset, numCandidates)
-			s := pl.Evaluator.SelectCandidate(ctx, candidates)
+			s := pl.Evaluator.SelectCandidate(ctx, tt.pod, candidates)
 			if s == nil || len(s.Name()) == 0 {
 				t.Fatalf("expected any node in %v, but candidate is missing", tt.expected)
 			}
@@ -1697,7 +1697,7 @@ func TestCustomSelection(t *testing.T) {
 				t.Fatalf("expected %d candidates (%+v) but got %d: %+v", len(tt.expected), tt.expected, len(candidates), candidateNames)
 			}
 			for len(candidates) > 0 {
-				selected := pl.Evaluator.SelectCandidate(ctx, candidates)
+				selected := pl.Evaluator.SelectCandidate(ctx, tt.pod, candidates)
 
 				expectVictims, ok := tt.expected[selected.Name()]
 				if !ok {

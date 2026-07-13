@@ -23,6 +23,8 @@ All lines are structured klog (parseable with `logfmt`). `pod` renders as `<name
 | `Plugin scored node for pod` | `plugin`, `node`, `score` |
 | `Extender scored node for pod` | `extender`, `node`, `score` |
 | `Calculated node's final score for pod` | `node`, `score` |
+| `Preemption candidate scored for pod` | `node`, `score`, `score_plugin`, `score_name`, `victims`, `numPDBViolatingVictims`, GPU packing fields |
+| `Preemption candidate selected for pod` | `node`, `score`, `selection_path`, `victims`, `numPDBViolatingVictims`, GPU packing fields |
 
 **Rejection lines** (emitted during node filtering in `schedule_one.go` `findNodesThatFitPod`):
 
@@ -116,7 +118,7 @@ Template variables:
 
 Panels:
 
-- **Decision Trace** (logs) — all six decision log lines for the pod, raw across attempts. Use it to identify the attempt number you want in derived panels.
+- **Decision Trace** (logs) — normal scheduling, rejection, and preemption decision log lines for the pod, raw across attempts. Use it to identify the attempt number you want in derived panels.
 - **Final Node Scores** (bargauge) — `max by (node)` over `Calculated node's final score for pod`, filtered to `attempt = $attempt`.
 - **Final Node Plugin / Extender Breakdown** (bargauges) — per-plugin/per-extender scores filtered to `node = $final_node` and `attempt = $attempt`.
 - **Scored Candidate Count** (stat) — filtered to `attempt = $attempt`.
@@ -125,6 +127,8 @@ Panels:
 - **Why Nodes Dropped Out** (donut) — prefilter-pruned vs filter-rejected vs extender-rejected vs unevaluated for `attempt = $attempt`.
 - **Latest Rejection Reasons** (bargauge) — `topk(12, ...)` over the rejection summary for `attempt = $attempt`, labeled `phase / plugin / reason`.
 - **Rejected Nodes Drilldown** (logs) — raw `Rejected node for pod` lines for `attempt = $attempt`.
+- **Preemption Candidate Scores** (bargauge) — protected-GPU preemption candidate packing scores for `attempt = $attempt`.
+- **Selected Preemption Candidate** (logs) — the winning nominated node and victim set for `attempt = $attempt`.
 - **Health row** (Prometheus) — Score plugin p95, extension-point p95, schedule attempts by result, pending pods by queue.
 
 Prerequisites: scheduler logs shipped to Loki with a `namespace` label; `kube-state-metrics` (`kube_pod_info`) in Prometheus.

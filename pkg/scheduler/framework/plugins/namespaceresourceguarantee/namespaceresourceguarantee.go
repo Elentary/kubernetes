@@ -57,6 +57,7 @@ const (
 	defaultMinCandidateNodesPercentage int32 = 10
 	defaultMinCandidateNodesAbsolute   int32 = 100
 	protectedGPUResource                     = v1.ResourceName("nvidia.com/gpu")
+	decisionLogProfile                       = "better-scheduler"
 
 	preemptionWaitingOnTerminatingVictims = "not eligible due to a terminating pod on the nominated node."
 	preemptionNoCandidateMessage          = "no candidate node for preemption"
@@ -99,6 +100,16 @@ type nodePreemptionTrace struct {
 	victims               []*v1.Pod
 	statusCode            framework.Code
 	statusMessage         string
+	packingScore          *preemptionCandidatePackingScore
+}
+
+type preemptionCandidatePackingScore struct {
+	score                       int64
+	incomingGPU                 int64
+	allocatableGPU              int64
+	protectedGPUBefore          int64
+	protectedGPUAfterVictims    int64
+	protectedGPUAfterScheduling int64
 }
 
 type preemptionDecisionTrace struct {
@@ -237,7 +248,7 @@ func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state *fra
 	defer pl.preemptionTrace.Delete(pod.UID)
 
 	result, status := pl.evaluator.Preempt(ctx, state, pod, m)
-	pl.logPreemptionDecision(ctx, pod, result, status)
+	pl.logPreemptionDecision(ctx, state, pod, result, status)
 	pl.syncNominatedNodeReservation(ctx, pod, result, status)
 
 	msg := status.Message()
@@ -266,15 +277,7 @@ func (pl *NamespaceResourceGuarantee) Score(ctx context.Context, _ *framework.Cy
 	}
 
 	protectedGPUUsage := pl.nodeProtectedResourceUsage(nodeInfo, protectedGPUResource)
-	if protectedGPUUsage > allocatableGPU {
-		protectedGPUUsage = allocatableGPU
-	}
-	requestedAfterScheduling := protectedGPUUsage + incomingGPU
-	if requestedAfterScheduling > allocatableGPU {
-		requestedAfterScheduling = allocatableGPU
-	}
-
-	return (requestedAfterScheduling * framework.MaxNodeScore) / allocatableGPU, nil
+	return protectedGPUPackingScore(incomingGPU, allocatableGPU, protectedGPUUsage), nil
 }
 
 // ScoreExtensions returns nil because the score is already normalized.
@@ -391,8 +394,32 @@ func (pl *NamespaceResourceGuarantee) PodEligibleToPreemptOthers(_ context.Conte
 	return true, ""
 }
 
-func (pl *NamespaceResourceGuarantee) OrderedScoreFuncs(_ context.Context, _ map[string]*extenderv1.Victims) []func(node string) int64 {
-	return nil
+func (pl *NamespaceResourceGuarantee) OrderedScoreFuncs(_ context.Context, pod *v1.Pod, nodesToVictims map[string]*extenderv1.Victims) []func(node string) int64 {
+	if pl.scoredProtectedGPURequest(pod) == 0 {
+		return nil
+	}
+
+	scores := make(map[string]preemptionCandidatePackingScore, len(nodesToVictims))
+	for nodeName, victims := range nodesToVictims {
+		score, ok := pl.preemptionProtectedGPUPackingScore(pod, nodeName, victims)
+		if !ok {
+			continue
+		}
+		scores[nodeName] = score
+		pl.recordNodePreemptionScore(pod.UID, nodeName, score)
+	}
+	if len(scores) == 0 {
+		return nil
+	}
+
+	return []func(node string) int64{
+		func(node string) int64 {
+			if score, ok := scores[node]; ok {
+				return score.score
+			}
+			return 0
+		},
+	}
 }
 
 func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
@@ -595,6 +622,65 @@ func (pl *NamespaceResourceGuarantee) protectedPodRequests(pod *v1.Pod) map[v1.R
 	return requested
 }
 
+func protectedGPUPackingScore(incomingGPU, allocatableGPU, protectedGPUUsage int64) int64 {
+	if allocatableGPU <= 0 || incomingGPU <= 0 {
+		return 0
+	}
+	if protectedGPUUsage < 0 {
+		protectedGPUUsage = 0
+	}
+	if protectedGPUUsage > allocatableGPU {
+		protectedGPUUsage = allocatableGPU
+	}
+	requestedAfterScheduling := protectedGPUUsage + incomingGPU
+	if requestedAfterScheduling > allocatableGPU {
+		requestedAfterScheduling = allocatableGPU
+	}
+	return (requestedAfterScheduling * framework.MaxNodeScore) / allocatableGPU
+}
+
+func (pl *NamespaceResourceGuarantee) preemptionProtectedGPUPackingScore(pod *v1.Pod, nodeName string, victims *extenderv1.Victims) (preemptionCandidatePackingScore, bool) {
+	incomingGPU := pl.scoredProtectedGPURequest(pod)
+	if incomingGPU == 0 {
+		return preemptionCandidatePackingScore{}, false
+	}
+	nodeInfo, err := pl.handle.SnapshotSharedLister().NodeInfos().Get(nodeName)
+	if err != nil {
+		return preemptionCandidatePackingScore{}, false
+	}
+	allocatableGPU := nodeAllocatableForResource(nodeInfo, protectedGPUResource)
+	if allocatableGPU <= 0 {
+		return preemptionCandidatePackingScore{}, false
+	}
+
+	protectedGPUBefore := pl.nodeProtectedResourceUsage(nodeInfo, protectedGPUResource)
+	protectedGPUAfterVictims := protectedGPUBefore
+	if victims != nil {
+		for _, victim := range victims.Pods {
+			protectedGPUAfterVictims -= pl.protectedResourceRequest(victim, protectedGPUResource)
+		}
+	}
+	if protectedGPUAfterVictims < 0 {
+		protectedGPUAfterVictims = 0
+	}
+	if protectedGPUAfterVictims > allocatableGPU {
+		protectedGPUAfterVictims = allocatableGPU
+	}
+
+	protectedGPUAfterScheduling := protectedGPUAfterVictims + incomingGPU
+	if protectedGPUAfterScheduling > allocatableGPU {
+		protectedGPUAfterScheduling = allocatableGPU
+	}
+	return preemptionCandidatePackingScore{
+		score:                       protectedGPUPackingScore(incomingGPU, allocatableGPU, protectedGPUAfterVictims),
+		incomingGPU:                 incomingGPU,
+		allocatableGPU:              allocatableGPU,
+		protectedGPUBefore:          protectedGPUBefore,
+		protectedGPUAfterVictims:    protectedGPUAfterVictims,
+		protectedGPUAfterScheduling: protectedGPUAfterScheduling,
+	}, true
+}
+
 func (pl *NamespaceResourceGuarantee) scoredProtectedGPURequest(pod *v1.Pod) int64 {
 	if !pl.hasConfiguredResource(protectedGPUResource) {
 		return 0
@@ -786,6 +872,21 @@ func (pl *NamespaceResourceGuarantee) recordNodeTrace(podUID types.UID, trace *n
 	d.nodes[trace.nodeName] = trace
 }
 
+func (pl *NamespaceResourceGuarantee) recordNodePreemptionScore(podUID types.UID, nodeName string, score preemptionCandidatePackingScore) {
+	d, ok := pl.lookupTrace(podUID)
+	if !ok {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	nodeTrace, ok := d.nodes[nodeName]
+	if !ok {
+		nodeTrace = &nodePreemptionTrace{nodeName: nodeName, statusCode: framework.Success}
+		d.nodes[nodeName] = nodeTrace
+	}
+	nodeTrace.packingScore = &score
+}
+
 func (pl *NamespaceResourceGuarantee) lookupTrace(podUID types.UID) (*preemptionDecisionTrace, bool) {
 	v, ok := pl.preemptionTrace.Load(podUID)
 	if !ok {
@@ -800,6 +901,7 @@ func (pl *NamespaceResourceGuarantee) lookupTrace(podUID types.UID) (*preemption
 
 func (pl *NamespaceResourceGuarantee) logPreemptionDecision(
 	ctx context.Context,
+	state *framework.CycleState,
 	preemptor *v1.Pod,
 	result *framework.PostFilterResult,
 	status *framework.Status,
@@ -816,25 +918,87 @@ func (pl *NamespaceResourceGuarantee) logPreemptionDecision(
 	event := classifyPreemptionEvent(preemptor, result, status, trace)
 	pl.handle.EventRecorder().Eventf(preemptor, nil, event.eventType, event.reason, "NamespaceResourceGuaranteePostFilter", event.note)
 
+	keyvals := preemptionDecisionLogKeyvals(preemptor, state)
 	for nodeName, nodeTrace := range trace.nodes {
+		selected := nodeName == event.nominatedNode && nodeTrace.statusCode == framework.Success
 		reason := "candidate not selected"
 		if nodeTrace.statusCode != framework.Success {
 			reason = nodeTrace.statusMessage
-		} else if nodeName == event.nominatedNode {
+		} else if selected {
 			reason = "selected"
+		}
+		if nodeTrace.packingScore != nil {
+			logger.Info(
+				"Preemption candidate scored for pod",
+				append(
+					preemptionCandidateScoreKeyvals(keyvals, nodeName, nodeTrace),
+					"selected", selected,
+				)...,
+			)
+		}
+		if selected {
+			logger.Info(
+				"Preemption candidate selected for pod",
+				append(
+					preemptionCandidateScoreKeyvals(keyvals, nodeName, nodeTrace),
+					"selection_path", "preemption",
+				)...,
+			)
 		}
 		logger.V(2).Info(
 			"NamespaceResourceGuarantee preemption decision",
 			"decisionID", preemptor.UID,
+			"attempt", framework.SchedulingDecisionAttemptFromState(state),
 			"preemptor", klog.KObj(preemptor),
 			"node", nodeName,
 			"statusCode", nodeTrace.statusCode,
 			"deficientResources", formatDeficits(nodeTrace.deficientResources),
 			"victims", podKeys(nodeTrace.victims),
 			"numPDBViolatingVictims", nodeTrace.numPDBViolatingVictim,
+			"score", preemptionCandidateScore(nodeTrace),
+			"selected", selected,
 			"reason", reason,
 		)
 	}
+}
+
+func preemptionDecisionLogKeyvals(preemptor *v1.Pod, state *framework.CycleState) []interface{} {
+	return []interface{}{
+		"profile", decisionLogProfile,
+		"decisionID", string(preemptor.UID),
+		"attempt", framework.SchedulingDecisionAttemptFromState(state),
+		"pod", klog.KObj(preemptor),
+	}
+}
+
+func preemptionCandidateScoreKeyvals(base []interface{}, nodeName string, nodeTrace *nodePreemptionTrace) []interface{} {
+	keyvals := append([]interface{}{}, base...)
+	keyvals = append(keyvals,
+		"node", nodeName,
+		"score", preemptionCandidateScore(nodeTrace),
+		"score_plugin", Name,
+		"score_name", "ProtectedGPUPacking",
+		"victims", podKeys(nodeTrace.victims),
+		"numPDBViolatingVictims", nodeTrace.numPDBViolatingVictim,
+	)
+	if nodeTrace.packingScore != nil {
+		score := nodeTrace.packingScore
+		keyvals = append(keyvals,
+			"incoming_gpu", score.incomingGPU,
+			"allocatable_gpu", score.allocatableGPU,
+			"protected_gpu_before", score.protectedGPUBefore,
+			"protected_gpu_after_victims", score.protectedGPUAfterVictims,
+			"protected_gpu_after_scheduling", score.protectedGPUAfterScheduling,
+		)
+	}
+	return keyvals
+}
+
+func preemptionCandidateScore(nodeTrace *nodePreemptionTrace) int64 {
+	if nodeTrace == nil || nodeTrace.packingScore == nil {
+		return 0
+	}
+	return nodeTrace.packingScore.score
 }
 
 func classifyPreemptionEvent(preemptor *v1.Pod, result *framework.PostFilterResult, status *framework.Status, trace *preemptionDecisionTrace) preemptionEvent {
