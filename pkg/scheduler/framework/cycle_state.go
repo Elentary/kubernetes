@@ -39,6 +39,40 @@ type StateData interface {
 // StateKey is the type of keys stored in CycleState.
 type StateKey string
 
+const schedulingDecisionAttemptStateKey StateKey = "schedulingDecisionAttempt"
+
+// SchedulingDecisionAttemptState carries the queue attempt for observability
+// across scheduler phases and plugins.
+type SchedulingDecisionAttemptState struct {
+	Attempt int
+}
+
+func (s *SchedulingDecisionAttemptState) Clone() StateData {
+	return &SchedulingDecisionAttemptState{Attempt: s.Attempt}
+}
+
+func WriteSchedulingDecisionAttempt(state *CycleState, attempt int) {
+	if state == nil {
+		return
+	}
+	state.Write(schedulingDecisionAttemptStateKey, &SchedulingDecisionAttemptState{Attempt: attempt})
+}
+
+func SchedulingDecisionAttemptFromState(state *CycleState) int {
+	if state == nil {
+		return 0
+	}
+	data, err := state.Read(schedulingDecisionAttemptStateKey)
+	if err != nil {
+		return 0
+	}
+	attemptState, ok := data.(*SchedulingDecisionAttemptState)
+	if !ok {
+		return 0
+	}
+	return attemptState.Attempt
+}
+
 // CycleState provides a mechanism for plugins to store and retrieve arbitrary data.
 // StateData stored by one plugin can be read, altered, or deleted by another plugin.
 // CycleState does not provide any data protection, as all plugins are assumed to be
