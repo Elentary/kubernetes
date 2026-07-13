@@ -2,6 +2,8 @@
 
 This guide defines the manual release flow for the custom scheduler image.
 
+For everything beyond the release flow (architecture, configuration, observability, operations, history), see the project documentation at [`docs/better-scheduler/`](../better-scheduler/README.md).
+
 ## Image Target
 
 - ECR repository: `767397673936.dkr.ecr.us-east-2.amazonaws.com/better-scheduler`
