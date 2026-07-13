@@ -23,6 +23,40 @@ import (
 	fwk "k8s.io/kube-scheduler/framework"
 )
 
+const schedulingDecisionAttemptStateKey fwk.StateKey = "schedulingDecisionAttempt"
+
+// SchedulingDecisionAttemptState carries the queue attempt for observability
+// across scheduler phases and plugins.
+type SchedulingDecisionAttemptState struct {
+	Attempt int
+}
+
+func (s *SchedulingDecisionAttemptState) Clone() fwk.StateData {
+	return &SchedulingDecisionAttemptState{Attempt: s.Attempt}
+}
+
+func WriteSchedulingDecisionAttempt(state fwk.CycleState, attempt int) {
+	if state == nil {
+		return
+	}
+	state.Write(schedulingDecisionAttemptStateKey, &SchedulingDecisionAttemptState{Attempt: attempt})
+}
+
+func SchedulingDecisionAttemptFromState(state fwk.CycleState) int {
+	if state == nil {
+		return 0
+	}
+	data, err := state.Read(schedulingDecisionAttemptStateKey)
+	if err != nil {
+		return 0
+	}
+	attemptState, ok := data.(*SchedulingDecisionAttemptState)
+	if !ok {
+		return 0
+	}
+	return attemptState.Attempt
+}
+
 // Note: CycleState uses a sync.Map to back the storage, because it is thread safe. It's aimed to optimize for the "write once and read many times" scenarios.
 // It is the recommended pattern used in all in-tree plugins - plugin-specific state is written once in PreFilter/PreScore and afterward read many times in Filter/Score.
 type CycleState struct {

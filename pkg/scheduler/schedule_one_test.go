@@ -4389,7 +4389,7 @@ func TestPrioritizeNodesDecisionLogs(t *testing.T) {
 
 			pod := st.MakePod().Namespace("team-a").Name("train-42").UID("decision-123").Obj()
 			state := framework.NewCycleState()
-			state.Write(schedulingDecisionAttemptStateKey, &schedulingDecisionAttemptState{attempt: 7})
+			framework.WriteSchedulingDecisionAttempt(state, 7)
 			_, err = prioritizeNodes(tCtx, nil, fwk, state, pod, tf.BuildNodeInfos(nodes))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -4534,7 +4534,7 @@ func TestFindNodesThatFitPodDecisionLogs(t *testing.T) {
 			}
 
 			state := framework.NewCycleState()
-			state.Write(schedulingDecisionAttemptStateKey, &schedulingDecisionAttemptState{attempt: 5})
+			framework.WriteSchedulingDecisionAttempt(state, 5)
 			_, _, err = scheduler.findNodesThatFitPod(tCtx, fwk, state, test.pod)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

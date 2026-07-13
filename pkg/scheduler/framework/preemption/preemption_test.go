@@ -94,7 +94,7 @@ func (pl *FakePostFilterPlugin) PodEligibleToPreemptOthers(_ context.Context, po
 	return true, ""
 }
 
-func (pl *FakePostFilterPlugin) OrderedScoreFuncs(ctx context.Context, nodesToVictims map[string]*extenderv1.Victims) []func(node string) int64 {
+func (pl *FakePostFilterPlugin) OrderedScoreFuncs(ctx context.Context, pod *v1.Pod, nodesToVictims map[string]*extenderv1.Victims) []func(node string) int64 {
 	return nil
 }
 
@@ -135,7 +135,7 @@ func (pl *FakePreemptionScorePostFilterPlugin) PodEligibleToPreemptOthers(_ cont
 	return true, ""
 }
 
-func (pl *FakePreemptionScorePostFilterPlugin) OrderedScoreFuncs(ctx context.Context, nodesToVictims map[string]*extenderv1.Victims) []func(node string) int64 {
+func (pl *FakePreemptionScorePostFilterPlugin) OrderedScoreFuncs(ctx context.Context, pod *v1.Pod, nodesToVictims map[string]*extenderv1.Victims) []func(node string) int64 {
 	return []func(string) int64{
 		func(node string) int64 {
 			var sumContainers int64
@@ -374,7 +374,7 @@ func TestSelectCandidate(t *testing.T) {
 					Interface:  fakePreemptionScorePostFilterPlugin,
 				}
 				candidates, _, _ := pe.DryRunPreemption(ctx, state, pod, nodeInfos, nil, 0, int32(len(nodeInfos)))
-				s := pe.SelectCandidate(ctx, candidates)
+				s := pe.SelectCandidate(ctx, tt.pod, candidates)
 				if s == nil || len(s.Name()) == 0 {
 					t.Errorf("expect any node in %v, but no candidate selected", tt.expected)
 					return
