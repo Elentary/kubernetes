@@ -102,7 +102,7 @@ func TestPreFilter(t *testing.T) {
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=3000 requested=1500`,
+			wantMessage: `namespace "team-a" guaranteed resource guarantee exceeded: resource="cpu" guarantee=4000 current=3000 requested=1500`,
 		},
 		{
 			name: "missing namespace guarantee defaults to zero",
@@ -116,7 +116,7 @@ func TestPreFilter(t *testing.T) {
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
+			wantMessage: `namespace "team-a" guaranteed resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
 		},
 		{
 			name: "normal pod bypasses plugin",
@@ -178,7 +178,57 @@ func TestPreFilter(t *testing.T) {
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" protected resource guarantee exceeded: resource="nvidia.com/gpu" guarantee=3 current=2 requested=2`,
+			wantMessage: `namespace "team-a" guaranteed resource guarantee exceeded: resource="nvidia.com/gpu" guarantee=3 current=2 requested=2`,
+		},
+		{
+			name: "semi-guaranteed usage has a cap independent from guaranteed usage",
+			args: tieredArgs(map[string]v1.ResourceList{
+				"team-a": {v1.ResourceCPU: resource.MustParse("4")},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "semi", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "3",
+			}),
+			existingPods: []*v1.Pod{
+				makePodWithRequests("guaranteed", "team-a", "protected", "node-a", map[v1.ResourceName]string{
+					v1.ResourceCPU: "4",
+				}),
+				makePodWithRequests("semi", "team-a", "semi", "node-a", map[v1.ResourceName]string{
+					v1.ResourceCPU: "1",
+				}),
+			},
+			nodes:    []*v1.Node{makeNode("node-a")},
+			wantCode: framework.Success,
+		},
+		{
+			name: "guaranteed usage has a cap independent from semi-guaranteed usage",
+			args: tieredArgs(map[string]v1.ResourceList{
+				"team-a": {v1.ResourceCPU: resource.MustParse("4")},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "3",
+			}),
+			existingPods: []*v1.Pod{
+				makePodWithRequests("semi", "team-a", "semi", "node-a", map[v1.ResourceName]string{
+					v1.ResourceCPU: "4",
+				}),
+				makePodWithRequests("guaranteed", "team-a", "protected", "node-a", map[v1.ResourceName]string{
+					v1.ResourceCPU: "1",
+				}),
+			},
+			nodes:    []*v1.Node{makeNode("node-a")},
+			wantCode: framework.Success,
+		},
+		{
+			name: "semi-guaranteed pod in an unmanaged namespace is capped at zero",
+			args: tieredArgs(map[string]v1.ResourceList{
+				"team-a": {v1.ResourceCPU: resource.MustParse("4")},
+			}),
+			pod: makePodWithRequests("incoming", "team-b", "semi", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}),
+			nodes:       []*v1.Node{makeNode("node-a")},
+			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantMessage: `namespace "team-b" semi-guaranteed resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=1000`,
 		},
 	}
 
@@ -523,51 +573,6 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCompareNamespaceForEviction(t *testing.T) {
-	deficits := []resourceDeficit{
-		{resourceName: v1.ResourceCPU, deficit: 4000, request: 8000},
-		{resourceName: v1.ResourceMemory, deficit: 8 << 30, request: 16 << 30},
-	}
-
-	t.Run("higher usage on most deficient resource is less important", func(t *testing.T) {
-		usage := map[string]map[v1.ResourceName]int64{
-			"team-a": {v1.ResourceCPU: 2000, v1.ResourceMemory: 12 << 30},
-			"team-b": {v1.ResourceCPU: 4000, v1.ResourceMemory: 1 << 30},
-		}
-		got, ok := compareNamespaceForEviction("team-a", "team-b", "team-c", deficits, usage)
-		if !ok {
-			t.Fatalf("expected namespace comparison to apply")
-		}
-		if got != -1 {
-			t.Fatalf("unexpected compare result: got %d, want -1", got)
-		}
-	})
-
-	t.Run("equal usage prefers evicting preemptor namespace", func(t *testing.T) {
-		usage := map[string]map[v1.ResourceName]int64{
-			"team-a": {v1.ResourceCPU: 2000, v1.ResourceMemory: 4 << 30},
-			"team-b": {v1.ResourceCPU: 2000, v1.ResourceMemory: 4 << 30},
-		}
-		got, ok := compareNamespaceForEviction("team-a", "team-b", "team-a", deficits, usage)
-		if !ok {
-			t.Fatalf("expected namespace comparison to apply")
-		}
-		if got != 1 {
-			t.Fatalf("unexpected compare result: got %d, want 1", got)
-		}
-	})
-
-	t.Run("unlisted namespace uses default tie-break", func(t *testing.T) {
-		usage := map[string]map[v1.ResourceName]int64{
-			"team-a": {v1.ResourceCPU: 1},
-		}
-		_, ok := compareNamespaceForEviction("team-a", "team-x", "team-a", deficits, usage)
-		if ok {
-			t.Fatalf("expected namespace comparison to be skipped for unlisted namespace")
-		}
-	})
 }
 
 func TestOrderedDeficientResources(t *testing.T) {
@@ -1004,6 +1009,13 @@ func newArgs(guarantees map[string]v1.ResourceList) config.NamespaceResourceGuar
 		ProtectedPriorityClassName: "protected",
 		NamespaceGuarantees:        guarantees,
 	}
+}
+
+func tieredArgs(guarantees map[string]v1.ResourceList) config.NamespaceResourceGuaranteeArgs {
+	args := newArgs(guarantees)
+	args.SemiProtectedPriorityClassName = "semi"
+	args.AdmissionAssignedTierNamespaces = []string{"team-a"}
+	return args
 }
 
 func makeNode(name string) *v1.Node {

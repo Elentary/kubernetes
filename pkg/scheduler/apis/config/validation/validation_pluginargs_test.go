@@ -203,6 +203,42 @@ func TestValidateNamespaceResourceGuaranteeArgs(t *testing.T) {
 				},
 			},
 		},
+		"valid tiered args": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName:      "guaranteed",
+				SemiProtectedPriorityClassName:  "semi-guaranteed",
+				AdmissionAssignedTierNamespaces: []string{"team-a"},
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"team-a": {v1.ResourceCPU: resource.MustParse("1")},
+				},
+			},
+		},
+		"semi class must differ from guaranteed class": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName:      "protected",
+				SemiProtectedPriorityClassName:  "protected",
+				AdmissionAssignedTierNamespaces: []string{"team-a"},
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"team-a": {v1.ResourceCPU: resource.MustParse("1")},
+				},
+			},
+			wantErrs: field.ErrorList{
+				&field.Error{Type: field.ErrorTypeInvalid, Field: "semiProtectedPriorityClassName"},
+			},
+		},
+		"tiered namespace must have a guarantee": {
+			args: config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName:      "guaranteed",
+				SemiProtectedPriorityClassName:  "semi-guaranteed",
+				AdmissionAssignedTierNamespaces: []string{"team-b"},
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"team-a": {v1.ResourceCPU: resource.MustParse("1")},
+				},
+			},
+			wantErrs: field.ErrorList{
+				&field.Error{Type: field.ErrorTypeInvalid, Field: "admissionAssignedTierNamespaces[0]"},
+			},
+		},
 		"empty namespace guarantees": {
 			args: config.NamespaceResourceGuaranteeArgs{
 				ProtectedPriorityClassName: "protected",

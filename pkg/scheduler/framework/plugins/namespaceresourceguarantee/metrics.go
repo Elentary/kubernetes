@@ -73,6 +73,12 @@ func (pl *NamespaceResourceGuarantee) recordConfiguredQuotaMetrics(profile strin
 		profile,
 		pl.args.ProtectedPriorityClassName,
 	).Set(1)
+	if len(pl.args.SemiProtectedPriorityClassName) > 0 {
+		namespaceResourceGuaranteeProtectedPriorityClassInfo.WithLabelValues(
+			profile,
+			pl.args.SemiProtectedPriorityClassName,
+		).Set(1)
+	}
 }
 
 func resourceUnit(resourceName v1.ResourceName) string {
