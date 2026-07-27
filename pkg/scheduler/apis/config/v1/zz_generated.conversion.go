@@ -547,6 +547,8 @@ func Convert_config_KubeSchedulerProfile_To_v1_KubeSchedulerProfile(in *config.K
 
 func autoConvert_v1_NamespaceResourceGuaranteeArgs_To_config_NamespaceResourceGuaranteeArgs(in *configv1.NamespaceResourceGuaranteeArgs, out *config.NamespaceResourceGuaranteeArgs, s conversion.Scope) error {
 	out.ProtectedPriorityClassName = in.ProtectedPriorityClassName
+	out.SemiProtectedPriorityClassName = in.SemiProtectedPriorityClassName
+	out.AdmissionAssignedTierNamespaces = *(*[]string)(unsafe.Pointer(&in.AdmissionAssignedTierNamespaces))
 	out.NamespaceGuarantees = *(*map[string]corev1.ResourceList)(unsafe.Pointer(&in.NamespaceGuarantees))
 	return nil
 }
@@ -558,6 +560,8 @@ func Convert_v1_NamespaceResourceGuaranteeArgs_To_config_NamespaceResourceGuaran
 
 func autoConvert_config_NamespaceResourceGuaranteeArgs_To_v1_NamespaceResourceGuaranteeArgs(in *config.NamespaceResourceGuaranteeArgs, out *configv1.NamespaceResourceGuaranteeArgs, s conversion.Scope) error {
 	out.ProtectedPriorityClassName = in.ProtectedPriorityClassName
+	out.SemiProtectedPriorityClassName = in.SemiProtectedPriorityClassName
+	out.AdmissionAssignedTierNamespaces = *(*[]string)(unsafe.Pointer(&in.AdmissionAssignedTierNamespaces))
 	out.NamespaceGuarantees = *(*map[string]corev1.ResourceList)(unsafe.Pointer(&in.NamespaceGuarantees))
 	return nil
 }

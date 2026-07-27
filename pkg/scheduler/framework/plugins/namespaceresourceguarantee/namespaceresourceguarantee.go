@@ -31,7 +31,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	policylisters "k8s.io/client-go/listers/policy/v1"
 	resourcehelper "k8s.io/component-helpers/resource"
@@ -80,6 +79,13 @@ type NamespaceResourceGuarantee struct {
 	preemptionTrace    sync.Map // map[types.UID]*preemptionDecisionTrace
 }
 
+type protectedTier string
+
+const (
+	guaranteedTier protectedTier = "guaranteed"
+	semiTier       protectedTier = "semi-guaranteed"
+)
+
 var _ framework.PreFilterPlugin = &NamespaceResourceGuarantee{}
 var _ framework.EnqueueExtensions = &NamespaceResourceGuarantee{}
 var _ framework.PostFilterPlugin = &NamespaceResourceGuarantee{}
@@ -113,9 +119,8 @@ type preemptionCandidatePackingScore struct {
 }
 
 type preemptionDecisionTrace struct {
-	namespaceUsage map[string]map[v1.ResourceName]int64
-	mu             sync.Mutex
-	nodes          map[string]*nodePreemptionTrace
+	mu    sync.Mutex
+	nodes map[string]*nodePreemptionTrace
 }
 
 type preemptionEvent struct {
@@ -175,9 +180,10 @@ func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framew
 	return plugin, nil
 }
 
-// PreFilter checks whether a protected pod would exceed any namespace resource guarantee.
+// PreFilter checks whether a protected pod would exceed its tier's namespace resource guarantee.
 func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
-	if !pl.isProtectedPod(pod) || len(pl.configuredResource) == 0 {
+	tier := pl.podTier(pod)
+	if tier == "" || len(pl.configuredResource) == 0 {
 		return nil, nil
 	}
 
@@ -186,7 +192,7 @@ func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.
 		return nil, nil
 	}
 
-	currentUsage, err := pl.namespaceProtectedUsage(pod.Namespace)
+	currentUsage, err := pl.namespaceTierUsage(pod.Namespace, tier)
 	if err != nil {
 		return nil, framework.AsStatus(err)
 	}
@@ -202,8 +208,9 @@ func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.
 			return nil, framework.NewStatus(
 				framework.UnschedulableAndUnresolvable,
 				fmt.Sprintf(
-					"namespace %q protected resource guarantee exceeded: resource=%q guarantee=%d current=%d requested=%d",
+					"namespace %q %s resource guarantee exceeded: resource=%q guarantee=%d current=%d requested=%d",
 					pod.Namespace,
+					tier,
 					resourceName,
 					resourceGuarantee,
 					resourceUsage,
@@ -484,13 +491,7 @@ func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 	}
 
 	sort.Slice(potentialVictims, func(i, j int) bool {
-		return utilMoreImportantByNamespacePolicy(
-			potentialVictims[i].Pod,
-			potentialVictims[j].Pod,
-			pod.Namespace,
-			deficientResources,
-			pl.preemptibleNamespaceUsageForPod(pod.UID),
-		)
+		return schedutil.MoreImportantPod(potentialVictims[i].Pod, potentialVictims[j].Pod)
 	})
 
 	var victims []*v1.Pod
@@ -562,7 +563,7 @@ func (pl *NamespaceResourceGuarantee) isSchedulableAfterPodChange(logger klog.Lo
 	return framework.QueueSkip, nil
 }
 
-func (pl *NamespaceResourceGuarantee) namespaceProtectedUsage(namespace string) (map[v1.ResourceName]int64, error) {
+func (pl *NamespaceResourceGuarantee) namespaceTierUsage(namespace string, tier protectedTier) (map[v1.ResourceName]int64, error) {
 	usage := make(map[v1.ResourceName]int64, len(pl.configuredResource))
 	for _, resourceName := range pl.configuredResource {
 		usage[resourceName] = 0
@@ -584,8 +585,12 @@ func (pl *NamespaceResourceGuarantee) namespaceProtectedUsage(namespace string) 
 		}
 
 		for _, podInfo := range nodeInfo.Pods {
+			if podInfo.Pod == nil || podInfo.Pod.Spec.NodeName == "" || podInfo.Pod.Namespace != namespace || pl.podTier(podInfo.Pod) != tier {
+				continue
+			}
+			requests := pl.podRequests(podInfo.Pod)
 			for _, resourceName := range pl.configuredResource {
-				usage[resourceName] += pl.scheduledProtectedResourceRequest(podInfo.Pod, namespace, resourceName)
+				usage[resourceName] += quantityValue(requests[resourceName], resourceName)
 			}
 		}
 	}
@@ -593,11 +598,14 @@ func (pl *NamespaceResourceGuarantee) namespaceProtectedUsage(namespace string) 
 	return usage, nil
 }
 
-func (pl *NamespaceResourceGuarantee) scheduledProtectedResourceRequest(pod *v1.Pod, namespace string, resourceName v1.ResourceName) int64 {
+func (pl *NamespaceResourceGuarantee) scheduledTierResourceRequest(pod *v1.Pod, namespace string, tier protectedTier, resourceName v1.ResourceName) int64 {
 	if pod == nil || pod.Spec.NodeName == "" || pod.Namespace != namespace {
 		return 0
 	}
-	return pl.protectedResourceRequest(pod, resourceName)
+	if pl.podTier(pod) != tier {
+		return 0
+	}
+	return pl.resourceRequest(pod, resourceName)
 }
 
 func (pl *NamespaceResourceGuarantee) protectedResourceRequest(pod *v1.Pod, resourceName v1.ResourceName) int64 {
@@ -608,7 +616,20 @@ func (pl *NamespaceResourceGuarantee) protectedResourceRequest(pod *v1.Pod, reso
 }
 
 func (pl *NamespaceResourceGuarantee) isProtectedPod(pod *v1.Pod) bool {
-	return pod != nil && pod.Spec.PriorityClassName == pl.args.ProtectedPriorityClassName
+	return pl.podTier(pod) != ""
+}
+
+func (pl *NamespaceResourceGuarantee) podTier(pod *v1.Pod) protectedTier {
+	if pod == nil {
+		return ""
+	}
+	if pod.Spec.PriorityClassName == pl.args.ProtectedPriorityClassName {
+		return guaranteedTier
+	}
+	if len(pl.args.SemiProtectedPriorityClassName) > 0 && pod.Spec.PriorityClassName == pl.args.SemiProtectedPriorityClassName {
+		return semiTier
+	}
+	return ""
 }
 
 func (pl *NamespaceResourceGuarantee) protectedPodRequests(pod *v1.Pod) map[v1.ResourceName]int64 {
@@ -717,64 +738,6 @@ func (pl *NamespaceResourceGuarantee) calculateNumCandidates(numNodes int32) int
 	return n
 }
 
-func utilMoreImportantByNamespacePolicy(
-	pod1, pod2 *v1.Pod,
-	preemptorNamespace string,
-	deficientResources []resourceDeficit,
-	namespaceUsage map[string]map[v1.ResourceName]int64,
-) bool {
-	p1 := corev1helpers.PodPriority(pod1)
-	p2 := corev1helpers.PodPriority(pod2)
-	if p1 != p2 {
-		return p1 > p2
-	}
-
-	nsCompare, ok := compareNamespaceForEviction(
-		pod1.Namespace,
-		pod2.Namespace,
-		preemptorNamespace,
-		deficientResources,
-		namespaceUsage,
-	)
-	if ok {
-		return nsCompare < 0
-	}
-
-	return schedutil.GetPodStartTime(pod1).Before(schedutil.GetPodStartTime(pod2))
-}
-
-// compareNamespaceForEviction compares two namespaces for eviction preference.
-// Return value is -1 when ns1 should be reprieved before ns2, +1 for the opposite.
-func compareNamespaceForEviction(
-	ns1, ns2, preemptorNamespace string,
-	deficientResources []resourceDeficit,
-	namespaceUsage map[string]map[v1.ResourceName]int64,
-) (int, bool) {
-	usage1, ok1 := namespaceUsage[ns1]
-	usage2, ok2 := namespaceUsage[ns2]
-	if !ok1 || !ok2 {
-		return 0, false
-	}
-	for _, deficit := range deficientResources {
-		u1 := usage1[deficit.resourceName]
-		u2 := usage2[deficit.resourceName]
-		if u1 != u2 {
-			// Higher usage should be evicted first, so lower usage is "more important".
-			if u1 < u2 {
-				return -1, true
-			}
-			return 1, true
-		}
-	}
-	if ns1 == preemptorNamespace && ns2 != preemptorNamespace {
-		return 1, true
-	}
-	if ns2 == preemptorNamespace && ns1 != preemptorNamespace {
-		return -1, true
-	}
-	return 0, false
-}
-
 func (pl *NamespaceResourceGuarantee) orderedDeficientResources(nodeInfo *framework.NodeInfo, pod *v1.Pod) []resourceDeficit {
 	var deficits []resourceDeficit
 	for _, resourceName := range pl.configuredResource {
@@ -806,60 +769,10 @@ func (pl *NamespaceResourceGuarantee) orderedDeficientResources(nodeInfo *framew
 	return deficits
 }
 
-func (pl *NamespaceResourceGuarantee) newPreemptionTrace(preemptor *v1.Pod) (*preemptionDecisionTrace, error) {
-	usage, err := pl.namespacePreemptibleUsage(preemptor)
-	if err != nil {
-		return nil, err
-	}
+func (pl *NamespaceResourceGuarantee) newPreemptionTrace(_ *v1.Pod) (*preemptionDecisionTrace, error) {
 	return &preemptionDecisionTrace{
-		namespaceUsage: usage,
-		nodes:          make(map[string]*nodePreemptionTrace),
+		nodes: make(map[string]*nodePreemptionTrace),
 	}, nil
-}
-
-func (pl *NamespaceResourceGuarantee) preemptibleNamespaceUsageForPod(podUID types.UID) map[string]map[v1.ResourceName]int64 {
-	trace, ok := pl.lookupTrace(podUID)
-	if !ok {
-		return nil
-	}
-	return trace.namespaceUsage
-}
-
-func (pl *NamespaceResourceGuarantee) namespacePreemptibleUsage(preemptor *v1.Pod) (map[string]map[v1.ResourceName]int64, error) {
-	usage := make(map[string]map[v1.ResourceName]int64, len(pl.args.NamespaceGuarantees))
-	protectedNamespaces := sets.KeySet(pl.args.NamespaceGuarantees)
-	for namespace := range protectedNamespaces {
-		usage[namespace] = make(map[v1.ResourceName]int64, len(pl.configuredResource))
-	}
-
-	sharedLister := pl.handle.SnapshotSharedLister()
-	if sharedLister == nil {
-		return nil, fmt.Errorf("snapshot shared lister is not available")
-	}
-	nodeInfos, err := sharedLister.NodeInfos().List()
-	if err != nil {
-		return nil, err
-	}
-
-	preemptorPriority := corev1helpers.PodPriority(preemptor)
-	for _, nodeInfo := range nodeInfos {
-		if nodeInfo == nil {
-			continue
-		}
-		for _, podInfo := range nodeInfo.Pods {
-			p := podInfo.Pod
-			if p == nil || p.Spec.NodeName == "" || !protectedNamespaces.Has(p.Namespace) {
-				continue
-			}
-			if corev1helpers.PodPriority(p) >= preemptorPriority {
-				continue
-			}
-			for _, resourceName := range pl.configuredResource {
-				usage[p.Namespace][resourceName] += pl.resourceRequest(p, resourceName)
-			}
-		}
-	}
-	return usage, nil
 }
 
 func (pl *NamespaceResourceGuarantee) recordNodeTrace(podUID types.UID, trace *nodePreemptionTrace) {
@@ -1248,8 +1161,12 @@ func getPDBLister(handle framework.Handle) policylisters.PodDisruptionBudgetList
 }
 
 func (pl *NamespaceResourceGuarantee) namespaceUsageDecreased(originalPod, modifiedPod *v1.Pod, namespace string) bool {
+	tier := pl.podTier(originalPod)
+	if tier == "" {
+		return false
+	}
 	for _, resourceName := range pl.configuredResource {
-		if pl.scheduledProtectedResourceRequest(originalPod, namespace, resourceName) > pl.scheduledProtectedResourceRequest(modifiedPod, namespace, resourceName) {
+		if pl.scheduledTierResourceRequest(originalPod, namespace, tier, resourceName) > pl.scheduledTierResourceRequest(modifiedPod, namespace, tier, resourceName) {
 			return true
 		}
 	}
@@ -1262,16 +1179,18 @@ func (pl *NamespaceResourceGuarantee) namespaceGuaranteeValue(namespace string, 
 }
 
 func (pl *NamespaceResourceGuarantee) resourceRequest(pod *v1.Pod, resourceName v1.ResourceName) int64 {
+	return quantityValue(pl.podRequests(pod)[resourceName], resourceName)
+}
+
+func (pl *NamespaceResourceGuarantee) podRequests(pod *v1.Pod) v1.ResourceList {
 	if pod == nil {
-		return 0
+		return nil
 	}
 
-	requests := resourcehelper.PodRequests(pod, resourcehelper.PodResourcesOptions{
+	return resourcehelper.PodRequests(pod, resourcehelper.PodResourcesOptions{
 		UseStatusResources:    utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodVerticalScaling),
 		SkipPodLevelResources: !utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResources),
 	})
-
-	return quantityValue(requests[resourceName], resourceName)
 }
 
 func quantityValue(quantity resource.Quantity, resourceName v1.ResourceName) int64 {
