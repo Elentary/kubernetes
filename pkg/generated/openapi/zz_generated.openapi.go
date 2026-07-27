@@ -68653,9 +68653,36 @@ func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref co
 					},
 					"protectedPriorityClassName": {
 						SchemaProps: spec.SchemaProps{
-							Description: "ProtectedPriorityClassName is the PriorityClass name that identifies protected pods.",
+							Description: "ProtectedPriorityClassName is the PriorityClass name that identifies explicitly guaranteed pods.",
 							Type:        []string{"string"},
 							Format:      "",
+						},
+					},
+					"semiProtectedPriorityClassName": {
+						SchemaProps: spec.SchemaProps{
+							Description: "SemiProtectedPriorityClassName is the PriorityClass name used for Pods that were automatically assigned the intermediate priority tier. When empty, NamespaceResourceGuarantee keeps its single-tier behavior.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"admissionAssignedTierNamespaces": {
+						VendorExtensible: spec.VendorExtensible{
+							Extensions: spec.Extensions{
+								"x-kubernetes-list-type": "set",
+							},
+						},
+						SchemaProps: spec.SchemaProps{
+							Description: "AdmissionAssignedTierNamespaces is the set of namespaces in which the semi-protected class is accepted and capped. Each namespace must also have an entry in NamespaceGuarantees.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: "",
+										Type:    []string{"string"},
+										Format:  "",
+									},
+								},
+							},
 						},
 					},
 					"namespaceGuarantees": {

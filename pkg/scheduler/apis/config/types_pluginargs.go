@@ -192,8 +192,18 @@ type NamespaceResourceGuaranteeArgs struct {
 	metav1.TypeMeta
 
 	// ProtectedPriorityClassName is the PriorityClass name that identifies
-	// protected pods.
+	// explicitly guaranteed pods.
 	ProtectedPriorityClassName string
+
+	// SemiProtectedPriorityClassName is the PriorityClass name used for Pods
+	// that were automatically assigned the intermediate priority tier.
+	// When empty, NamespaceResourceGuarantee keeps its single-tier behavior.
+	SemiProtectedPriorityClassName string
+
+	// AdmissionAssignedTierNamespaces is the set of namespaces in which the
+	// semi-protected class is accepted and capped. Each namespace must also have
+	// an entry in NamespaceGuarantees.
+	AdmissionAssignedTierNamespaces []string
 
 	// NamespaceGuarantees maps namespace to per-resource protected guarantees.
 	// Supported resources are cpu, memory, and extended scalar resources.

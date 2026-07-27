@@ -58,6 +58,10 @@ profiles:
           apiVersion: kubescheduler.config.k8s.io/v1
           kind: NamespaceResourceGuaranteeArgs
           protectedPriorityClassName: guaranteed
+          semiProtectedPriorityClassName: semi-guaranteed
+          admissionAssignedTierNamespaces:
+            - team-a
+            - team-b
           namespaceGuarantees:
             team-a:
               cpu: "64"
@@ -88,12 +92,33 @@ profiles:
   # pods with empty spec.schedulerName land here.
   - schedulerName: default-scheduler
     plugins:
+      preFilter:
+        enabled:
+          # Cap protected PriorityClasses even if a Pod is misrouted.
+          - name: NamespaceResourceGuarantee
       filter:
         enabled:
           - name: NominatedNodeReservation    # REQUIRED in every profile — see caveat
       postBind:
         enabled:
           - name: NominatedNodeReservation
+    pluginConfig:
+      - name: NamespaceResourceGuarantee
+        args:
+          apiVersion: kubescheduler.config.k8s.io/v1
+          kind: NamespaceResourceGuaranteeArgs
+          protectedPriorityClassName: guaranteed
+          semiProtectedPriorityClassName: semi-guaranteed
+          admissionAssignedTierNamespaces: [team-a, team-b]
+          namespaceGuarantees:
+            team-a:
+              cpu: "64"
+              memory: "256Gi"
+              nvidia.com/gpu: "32"
+            team-b:
+              cpu: "48"
+              memory: "192Gi"
+              nvidia.com/gpu: "24"
 ```
 
 Key points:
@@ -109,12 +134,15 @@ Type: `pkg/scheduler/apis/config/types_pluginargs.go` (internal), `staging/src/k
 
 | Field | Type | Semantics |
 |---|---|---|
-| `protectedPriorityClassName` | string, required | PriorityClass name identifying guaranteed pods (exact match on `spec.priorityClassName`) |
+| protectedPriorityClassName | string, required | PriorityClass name identifying explicit guaranteed pods (exact match on spec.priorityClassName) |
+| semiProtectedPriorityClassName | string, optional | PriorityClass for admission-assigned semi-guaranteed Pods; enables the two-tier mode |
+| admissionAssignedTierNamespaces | []string, required when semi tier is set | Namespaces permitted to receive semi-guaranteed classification; each must occur in namespaceGuarantees |
 | `namespaceGuarantees` | `map[namespace]ResourceList`, required | Per-namespace guarantees. A namespace or resource missing from the map has guarantee **0** — guaranteed pods from unlisted namespaces requesting a configured resource can never schedule |
 
 Validation rules (config is rejected at scheduler startup otherwise):
 
 - `protectedPriorityClassName` must be non-empty.
+- When configured, semiProtectedPriorityClassName must differ from the guaranteed class and the enabled namespace list must be non-empty, unique, and covered by namespaceGuarantees.
 - `namespaceGuarantees` must be non-empty and contain at least one resource guarantee overall; namespace keys must be non-empty.
 - Resources must be `cpu`, `memory`, or extended scalar resources (e.g. `nvidia.com/gpu`).
 - Quantities must be `>= 0`; extended resources must be integers (`"2"` ok, `"1500m"` rejected).
@@ -131,7 +159,14 @@ spec:
 ```
 
 - `schedulerName` alone routes the pod through the profile (getting reservation/packing behavior) without guarantee semantics.
-- `priorityClassName: guaranteed` alone (with the default profile) gives priority-based preemption but no guarantee cap — do not allow this; the admission webhook should prevent it.
+- priorityClassName: guaranteed alone is capped by the default-profile PreFilter backstop, but it still bypasses routing and the protected preemption/reservation path; the admission webhook must prevent it.
+
+With admission-assigned tiers enabled, the external webhook sets
+semi-guaranteed for ordinary Pods that fit its conservative namespace charge,
+and routes both protected classes to better-scheduler. The scheduler enforces
+independent physical caps for the guaranteed and semi-guaranteed classes:
+either may use one namespace quota when capacity exists; guaranteed work
+preempts semi-guaranteed work under pressure.
 
 Example PriorityClass:
 
