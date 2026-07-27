@@ -235,6 +235,11 @@ func (in *KubeSchedulerProfile) DeepCopy() *KubeSchedulerProfile {
 func (in *NamespaceResourceGuaranteeArgs) DeepCopyInto(out *NamespaceResourceGuaranteeArgs) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
+	if in.AdmissionAssignedTierNamespaces != nil {
+		in, out := &in.AdmissionAssignedTierNamespaces, &out.AdmissionAssignedTierNamespaces
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.NamespaceGuarantees != nil {
 		in, out := &in.NamespaceGuarantees, &out.NamespaceGuarantees
 		*out = make(map[string]v1.ResourceList, len(*in))

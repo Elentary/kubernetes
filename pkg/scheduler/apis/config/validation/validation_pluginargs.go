@@ -335,6 +335,17 @@ func ValidateNamespaceResourceGuaranteeArgs(path *field.Path, args *config.Names
 	if len(args.ProtectedPriorityClassName) == 0 {
 		allErrs = append(allErrs, field.Required(path.Child("protectedPriorityClassName"), "must not be empty"))
 	}
+	semiClassPath := path.Child("semiProtectedPriorityClassName")
+	namespacesPath := path.Child("admissionAssignedTierNamespaces")
+	if len(args.SemiProtectedPriorityClassName) > 0 && args.SemiProtectedPriorityClassName == args.ProtectedPriorityClassName {
+		allErrs = append(allErrs, field.Invalid(semiClassPath, args.SemiProtectedPriorityClassName, "must differ from protectedPriorityClassName"))
+	}
+	if len(args.SemiProtectedPriorityClassName) == 0 && len(args.AdmissionAssignedTierNamespaces) > 0 {
+		allErrs = append(allErrs, field.Required(semiClassPath, "must be set when admissionAssignedTierNamespaces is configured"))
+	}
+	if len(args.SemiProtectedPriorityClassName) > 0 && len(args.AdmissionAssignedTierNamespaces) == 0 {
+		allErrs = append(allErrs, field.Required(namespacesPath, "must not be empty when semiProtectedPriorityClassName is configured"))
+	}
 
 	guaranteesPath := path.Child("namespaceGuarantees")
 	if len(args.NamespaceGuarantees) == 0 {
@@ -364,6 +375,22 @@ func ValidateNamespaceResourceGuaranteeArgs(path *field.Path, args *config.Names
 	}
 	if len(args.NamespaceGuarantees) > 0 && totalResources == 0 {
 		allErrs = append(allErrs, field.Required(guaranteesPath, "must contain at least one resource guarantee"))
+	}
+	seenNamespaces := sets.New[string]()
+	for i, namespace := range args.AdmissionAssignedTierNamespaces {
+		itemPath := namespacesPath.Index(i)
+		if len(namespace) == 0 {
+			allErrs = append(allErrs, field.Invalid(itemPath, namespace, "namespace must not be empty"))
+			continue
+		}
+		if seenNamespaces.Has(namespace) {
+			allErrs = append(allErrs, field.Duplicate(itemPath, namespace))
+			continue
+		}
+		seenNamespaces.Insert(namespace)
+		if _, ok := args.NamespaceGuarantees[namespace]; !ok {
+			allErrs = append(allErrs, field.Invalid(itemPath, namespace, "must have a namespaceGuarantees entry"))
+		}
 	}
 
 	return allErrs.ToAggregate()
