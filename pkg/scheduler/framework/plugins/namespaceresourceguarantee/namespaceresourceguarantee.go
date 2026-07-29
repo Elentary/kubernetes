@@ -180,7 +180,7 @@ func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framew
 	return plugin, nil
 }
 
-// PreFilter checks whether a protected pod would exceed its tier's namespace resource guarantee.
+// PreFilter checks whether a protected pod would exceed its namespace's shared protected resource guarantee.
 func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
 	tier := pl.podTier(pod)
 	if tier == "" || len(pl.configuredResource) == 0 {
@@ -192,7 +192,7 @@ func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.
 		return nil, nil
 	}
 
-	currentUsage, err := pl.namespaceTierUsage(pod.Namespace, tier)
+	currentUsage, err := pl.namespaceProtectedUsage(pod.Namespace)
 	if err != nil {
 		return nil, framework.AsStatus(err)
 	}
@@ -208,9 +208,8 @@ func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.
 			return nil, framework.NewStatus(
 				framework.UnschedulableAndUnresolvable,
 				fmt.Sprintf(
-					"namespace %q %s resource guarantee exceeded: resource=%q guarantee=%d current=%d requested=%d",
+					"namespace %q shared protected resource guarantee exceeded: resource=%q guarantee=%d current=%d requested=%d",
 					pod.Namespace,
-					tier,
 					resourceName,
 					resourceGuarantee,
 					resourceUsage,
@@ -563,7 +562,7 @@ func (pl *NamespaceResourceGuarantee) isSchedulableAfterPodChange(logger klog.Lo
 	return framework.QueueSkip, nil
 }
 
-func (pl *NamespaceResourceGuarantee) namespaceTierUsage(namespace string, tier protectedTier) (map[v1.ResourceName]int64, error) {
+func (pl *NamespaceResourceGuarantee) namespaceProtectedUsage(namespace string) (map[v1.ResourceName]int64, error) {
 	usage := make(map[v1.ResourceName]int64, len(pl.configuredResource))
 	for _, resourceName := range pl.configuredResource {
 		usage[resourceName] = 0
@@ -585,7 +584,7 @@ func (pl *NamespaceResourceGuarantee) namespaceTierUsage(namespace string, tier 
 		}
 
 		for _, podInfo := range nodeInfo.Pods {
-			if podInfo.Pod == nil || podInfo.Pod.Spec.NodeName == "" || podInfo.Pod.Namespace != namespace || pl.podTier(podInfo.Pod) != tier {
+			if podInfo.Pod == nil || podInfo.Pod.Spec.NodeName == "" || podInfo.Pod.Namespace != namespace || !pl.isProtectedPod(podInfo.Pod) {
 				continue
 			}
 			requests := pl.podRequests(podInfo.Pod)

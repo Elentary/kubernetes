@@ -102,7 +102,7 @@ func TestPreFilter(t *testing.T) {
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" guaranteed resource guarantee exceeded: resource="cpu" guarantee=4000 current=3000 requested=1500`,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=3000 requested=1500`,
 		},
 		{
 			name: "missing namespace guarantee defaults to zero",
@@ -116,7 +116,7 @@ func TestPreFilter(t *testing.T) {
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" guaranteed resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
 		},
 		{
 			name: "normal pod bypasses plugin",
@@ -178,10 +178,10 @@ func TestPreFilter(t *testing.T) {
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" guaranteed resource guarantee exceeded: resource="nvidia.com/gpu" guarantee=3 current=2 requested=2`,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="nvidia.com/gpu" guarantee=3 current=2 requested=2`,
 		},
 		{
-			name: "semi-guaranteed usage has a cap independent from guaranteed usage",
+			name: "semi-guaranteed pod is capped by combined guaranteed usage",
 			args: tieredArgs(map[string]v1.ResourceList{
 				"team-a": {v1.ResourceCPU: resource.MustParse("4")},
 			}),
@@ -196,11 +196,12 @@ func TestPreFilter(t *testing.T) {
 					v1.ResourceCPU: "1",
 				}),
 			},
-			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: framework.Success,
+			nodes:       []*v1.Node{makeNode("node-a")},
+			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=5000 requested=3000`,
 		},
 		{
-			name: "guaranteed usage has a cap independent from semi-guaranteed usage",
+			name: "guaranteed pod is capped by combined semi-guaranteed usage",
 			args: tieredArgs(map[string]v1.ResourceList{
 				"team-a": {v1.ResourceCPU: resource.MustParse("4")},
 			}),
@@ -215,8 +216,9 @@ func TestPreFilter(t *testing.T) {
 					v1.ResourceCPU: "1",
 				}),
 			},
-			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: framework.Success,
+			nodes:       []*v1.Node{makeNode("node-a")},
+			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=5000 requested=3000`,
 		},
 		{
 			name: "semi-guaranteed pod in an unmanaged namespace is capped at zero",
@@ -228,7 +230,7 @@ func TestPreFilter(t *testing.T) {
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-b" semi-guaranteed resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=1000`,
+			wantMessage: `namespace "team-b" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=1000`,
 		},
 	}
 
@@ -498,6 +500,16 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			expectedHint: framework.Queue,
 		},
 		{
+			name: "same namespace semi-guaranteed cpu pod deleted",
+			targetPod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}),
+			oldObj: makePodWithRequests("running", "team-a", "semi", "node-a", map[v1.ResourceName]string{
+				v1.ResourceCPU: "2",
+			}),
+			expectedHint: framework.Queue,
+		},
+		{
 			name: "other namespace protected cpu pod deleted",
 			targetPod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
 				v1.ResourceCPU: "1",
@@ -553,7 +565,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 	}
 
 	pl := &NamespaceResourceGuarantee{
-		args: newArgs(map[string]v1.ResourceList{
+		args: tieredArgs(map[string]v1.ResourceList{
 			"team-a": {
 				v1.ResourceCPU:    resource.MustParse("1"),
 				v1.ResourceMemory: resource.MustParse("2Gi"),
