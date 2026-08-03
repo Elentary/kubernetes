@@ -62,6 +62,7 @@ profiles:
           admissionAssignedTierNamespaces:
             - team-a
             - team-b
+          restrictGuaranteedPreemptionToManagedNamespaces: true
           namespaceGuarantees:
             team-a:
               cpu: "64"
@@ -138,6 +139,7 @@ Type: `pkg/scheduler/apis/config/types_pluginargs.go` (internal), `staging/src/k
 | semiProtectedPriorityClassName | string, optional | PriorityClass for admission-assigned semi-guaranteed Pods; enables the two-tier mode |
 | admissionAssignedTierNamespaces | []string, required when semi tier is set | Namespaces permitted to receive semi-guaranteed classification; each must occur in namespaceGuarantees |
 | `namespaceGuarantees` | `map[namespace]ResourceList`, required | Per-namespace shared protected guarantee. A namespace or resource missing from the map has guarantee **0** — protected pods from unlisted namespaces requesting a configured resource can never schedule |
+| restrictGuaranteedPreemptionToManagedNamespaces | bool, optional | When true, explicit guaranteed Pods may preempt only lower-priority Pods from a managed namespace (a key in namespaceGuarantees). Defaults to false and does not affect semi-guaranteed Pods. |
 
 Validation rules (config is rejected at scheduler startup otherwise):
 

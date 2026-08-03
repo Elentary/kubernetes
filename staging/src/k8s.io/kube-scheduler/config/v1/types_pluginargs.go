@@ -218,6 +218,13 @@ type NamespaceResourceGuaranteeArgs struct {
 	// Supported resources are cpu, memory, and extended scalar resources.
 	// +mapType=granular
 	NamespaceGuarantees map[string]corev1.ResourceList `json:"namespaceGuarantees,omitempty"`
+
+	// RestrictGuaranteedPreemptionToManagedNamespaces limits explicit guaranteed
+	// Pods to preempting Pods from namespaces configured in NamespaceGuarantees.
+	// When omitted, guaranteed Pods retain the existing cross-namespace
+	// preemption behavior.
+	// +optional
+	RestrictGuaranteedPreemptionToManagedNamespaces bool `json:"restrictGuaranteedPreemptionToManagedNamespaces,omitempty"`
 }
 
 // ScoringStrategyType the type of scoring strategy used in NodeResourcesFit plugin.

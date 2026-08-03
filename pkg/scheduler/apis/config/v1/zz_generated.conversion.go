@@ -582,6 +582,7 @@ func autoConvert_v1_NamespaceResourceGuaranteeArgs_To_config_NamespaceResourceGu
 	out.SemiProtectedPriorityClassName = in.SemiProtectedPriorityClassName
 	out.AdmissionAssignedTierNamespaces = *(*[]string)(unsafe.Pointer(&in.AdmissionAssignedTierNamespaces))
 	out.NamespaceGuarantees = *(*map[string]corev1.ResourceList)(unsafe.Pointer(&in.NamespaceGuarantees))
+	out.RestrictGuaranteedPreemptionToManagedNamespaces = in.RestrictGuaranteedPreemptionToManagedNamespaces
 	return nil
 }
 
@@ -595,6 +596,7 @@ func autoConvert_config_NamespaceResourceGuaranteeArgs_To_v1_NamespaceResourceGu
 	out.SemiProtectedPriorityClassName = in.SemiProtectedPriorityClassName
 	out.AdmissionAssignedTierNamespaces = *(*[]string)(unsafe.Pointer(&in.AdmissionAssignedTierNamespaces))
 	out.NamespaceGuarantees = *(*map[string]corev1.ResourceList)(unsafe.Pointer(&in.NamespaceGuarantees))
+	out.RestrictGuaranteedPreemptionToManagedNamespaces = in.RestrictGuaranteedPreemptionToManagedNamespaces
 	return nil
 }
 

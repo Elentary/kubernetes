@@ -255,6 +255,118 @@ func TestPreFilter(t *testing.T) {
 	}
 }
 
+func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
+	metrics.Register()
+
+	tests := []struct {
+		name             string
+		restrict         bool
+		preemptorClass   string
+		victimNamespaces []string
+		allocatableCPU   string
+		wantVictimNames  []string
+		wantStatusCode   framework.Code
+	}{
+		{
+			name:             "guaranteed preemptor selects only managed namespace victims when restricted",
+			restrict:         true,
+			preemptorClass:   "protected",
+			victimNamespaces: []string{"team-b", "unmanaged"},
+			allocatableCPU:   "2",
+			wantVictimNames:  []string{"victim-0"},
+			wantStatusCode:   framework.Success,
+		},
+		{
+			name:             "guaranteed preemptor cannot select only unmanaged victims when restricted",
+			restrict:         true,
+			preemptorClass:   "protected",
+			victimNamespaces: []string{"unmanaged"},
+			allocatableCPU:   "1",
+			wantStatusCode:   framework.UnschedulableAndUnresolvable,
+		},
+		{
+			name:             "omitted restriction retains unmanaged victim eligibility",
+			preemptorClass:   "protected",
+			victimNamespaces: []string{"unmanaged"},
+			allocatableCPU:   "1",
+			wantVictimNames:  []string{"victim-0"},
+			wantStatusCode:   framework.Success,
+		},
+		{
+			name:             "restriction does not apply to semi-guaranteed preemptor",
+			restrict:         true,
+			preemptorClass:   "semi",
+			victimNamespaces: []string{"unmanaged"},
+			allocatableCPU:   "1",
+			wantVictimNames:  []string{"victim-0"},
+			wantStatusCode:   framework.Success,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, ctx := ktesting.NewTestContext(t)
+			preemptor := makePodWithRequests("incoming", "team-a", tt.preemptorClass, "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
+			preemptor.Spec.Priority = ptrTo(int32(1000))
+			victims := make([]*v1.Pod, 0, len(tt.victimNamespaces))
+			for i, namespace := range tt.victimNamespaces {
+				victim := makePodWithRequests(fmt.Sprintf("victim-%d", i), namespace, "normal", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
+				victim.Spec.Priority = ptrTo(int32(0))
+				victims = append(victims, victim)
+			}
+			node := makeNode("node-a")
+			node.Status.Allocatable[v1.ResourceCPU] = resource.MustParse(tt.allocatableCPU)
+			node.Status.Allocatable[v1.ResourcePods] = resource.MustParse("100")
+			snapshot := internalcache.NewSnapshot(victims, []*v1.Node{node})
+
+			fh, err := tf.NewFramework(ctx,
+				[]tf.RegisterPluginFunc{
+					tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
+					tf.RegisterPluginAsExtensions(noderesources.Name, nodeResourcesFitFunc, "Filter", "PreFilter"),
+					tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
+				},
+				"",
+				frameworkruntime.WithSnapshotSharedLister(snapshot),
+				frameworkruntime.WithLogger(logger),
+				frameworkruntime.WithPodNominator(noopPodNominator{}),
+				frameworkruntime.WithWaitingPods(frameworkruntime.NewWaitingPodsMap()),
+			)
+			if err != nil {
+				t.Fatalf("creating framework: %v", err)
+			}
+			args := tieredArgs(map[string]v1.ResourceList{
+				"team-a": {v1.ResourceCPU: resource.MustParse("10")},
+				"team-b": {v1.ResourceCPU: resource.MustParse("10")},
+			})
+			args.RestrictGuaranteedPreemptionToManagedNamespaces = tt.restrict
+			plugin := &NamespaceResourceGuarantee{
+				handle:             fh,
+				args:               args,
+				configuredResource: []v1.ResourceName{v1.ResourceCPU},
+			}
+			state := framework.NewCycleState()
+			if _, status, _ := fh.RunPreFilterPlugins(ctx, state, preemptor); !status.IsSuccess() {
+				t.Fatalf("running prefilter plugins: %v", status)
+			}
+			nodeInfo, err := snapshot.NodeInfos().Get(node.Name)
+			if err != nil {
+				t.Fatalf("getting node info: %v", err)
+			}
+			got, _, status := plugin.SelectVictimsOnNode(ctx, state, preemptor, nodeInfo, nil)
+			if status.Code() != tt.wantStatusCode {
+				t.Fatalf("unexpected status: got %v (%s), want %v", status.Code(), status.Message(), tt.wantStatusCode)
+			}
+			var gotNames []string
+			for _, victim := range got {
+				gotNames = append(gotNames, victim.Name)
+			}
+			if diff := cmp.Diff(tt.wantVictimNames, gotNames); diff != "" {
+				t.Fatalf("unexpected victims (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestPreFilterMetrics(t *testing.T) {
 	resetMetricsForTest()
 	t.Cleanup(resetMetricsForTest)
