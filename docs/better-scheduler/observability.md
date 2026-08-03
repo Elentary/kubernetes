@@ -85,24 +85,38 @@ Event notes embed `decisionID=<preemptor pod UID>` for correlation and are bound
 
 ## 3. Metrics (Prometheus)
 
-Plugin-exported config gauges (ALPHA, registered in `namespaceresourceguarantee/metrics.go`):
+Plugin-exported metrics are ALPHA. Config and policy metrics are registered in `namespaceresourceguarantee/metrics.go`:
 
 - `scheduler_namespace_resource_guarantee_quota{profile, namespace, resource, unit}` — configured guarantee (`unit`: `millicore` | `byte` | `unit`).
 - `scheduler_namespace_resource_guarantee_protected_priority_class_info{profile, priority_class}` — constant 1.
+- `scheduler_namespace_resource_guarantee_prefilter_decisions_total{profile, namespace, tier, result}` — protected-pod guarantee checks; `result` is `allowed`, `quota_exceeded`, or `error`. `allowed` means only that the guarantee check passed.
+- `scheduler_namespace_resource_guarantee_quota_exceeded_total{profile, namespace, tier, resource}` — the resource that rejected a protected-pod guarantee check.
+- `scheduler_namespace_resource_guarantee_preemption_outcomes_total{profile, namespace, tier, outcome}` — PostFilter outcomes: `ineligible`, `started`, `waiting`, `not_helpful`, `no_candidate`, or `error`.
+- `scheduler_namespace_resource_guarantee_victim_deletions_total{profile, namespace, tier}` — successful victim deletion requests, attributed to the preemptor namespace and tier.
+
+Reservation metrics are registered in `nominatednodereservation/metrics.go`:
+
+- `scheduler_nominated_node_reservations_active` — current process-local reservations.
+- `scheduler_nominated_node_reservation_transitions_total{action, reason}` — bounded reservation creation, release, and stale-cleanup transitions.
+- `scheduler_nominated_node_reservation_blocked_pods_total{profile}` — scheduling attempts blocked to protect a reservation.
+
+The ServiceMonitor adds its own `namespace` target label. With the current Prometheus label-conflict behavior, the plugin's metric label named `namespace` is stored as `exported_namespace`; dashboards must query that label.
 
 Useful upstream scheduler metrics (filter by `profile="better-scheduler"` where the label exists):
 
-- `scheduler_plugin_execution_duration_seconds_bucket{plugin, extension_point, profile}` — e.g. Score plugin p95.
+- `scheduler_plugin_execution_duration_seconds_bucket{plugin, extension_point}` — e.g. custom-plugin p95; this metric has no profile label.
 - `scheduler_framework_extension_point_duration_seconds_bucket{extension_point, profile}`.
 - `scheduler_schedule_attempts_total{result, profile}` — scheduled / unschedulable / error rates.
 - `scheduler_pending_pods{queue}` — active / backoff / unschedulable / gated.
-- `scheduler_preemption_attempts_total` — incremented by the plugin's PostFilter.
+- `scheduler_preemption_attempts_total` — eligible preemption attempts; ordinary Pods rejected by the custom PostFilter are excluded.
 
-There is deliberately **no** per-decision Prometheus metric (per-pod/per-node label cardinality would explode); decisions live in logs.
+There is deliberately **no** per-Pod or per-node Prometheus metric (label cardinality would explode); individual decisions live in logs.
 
 ## 4. Grafana Dashboard
 
-File: `releases/better-scheduler/grafana-decision-dashboard.json` — "Better Scheduler Decision Explainability" (uid `better-scheduler-decision-explainability`). Import into Grafana; needs one Loki and one Prometheus datasource.
+Operational metrics: `releases/better-scheduler/grafana-scheduler-dashboard.json` — "Better Scheduler" (uid `better-scheduler`). It uses Prometheus for guarantee usage, policy outcomes, scheduling health, and scheduler internals.
+
+Decision investigation: `releases/better-scheduler/grafana-decision-dashboard.json` — "Better Scheduler Decision Explainability" (uid `better-scheduler-decision-explainability`). It needs one Loki and one Prometheus datasource.
 
 Usage model: enter a workload namespace + pod name, get the full story of its scheduling decision.
 

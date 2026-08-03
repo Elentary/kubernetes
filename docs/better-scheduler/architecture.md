@@ -143,12 +143,14 @@ score = min(protectedGPUUsageOnNode + incomingGPURequest, allocatableGPU) * 100 
 
 Rationale: guaranteed pods cannot be evicted, so fragmentation caused by spreading is permanent — e.g. eight 1-GPU guaranteed pods spread across eight 8-GPU nodes make a future 8-GPU guaranteed pod unschedulable even though 56 GPUs are free. Packing is *preventive*: it avoids creating new fragmentation but cannot repair existing fragmentation.
 
-### 5.7 Config metrics
+### 5.7 Metrics
 
-`metrics.go` exports two ALPHA gauges on plugin construction so dashboards can see the effective config without reading the ConfigMap:
+`metrics.go` exports ALPHA config gauges and bounded policy counters. The gauges let dashboards see the effective config without reading the ConfigMap:
 
 - `scheduler_namespace_resource_guarantee_quota{profile, namespace, resource, unit}` — configured guarantee per namespace/resource (`unit` is `millicore` for cpu, `byte` for memory, `unit` otherwise).
 - `scheduler_namespace_resource_guarantee_protected_priority_class_info{profile, priority_class}` — constant 1, identifies the configured PriorityClass.
+
+The policy counters expose aggregate PreFilter decisions, quota-exceeded resources, preemption outcomes, and successful victim deletion requests. They use only profile, namespace, tier, resource, and bounded outcome labels; Pod and node identities remain in logs.
 
 ## 6. NominatedNodeReservation Plugin
 
@@ -163,6 +165,7 @@ When preemption succeeds, the preemptor only gets `status.nominatedNodeName`; no
 - `PostBind` (`plugin.go:105`) releases the reservation when the holder binds (to any node).
 - Stale reservations are cleaned up inline during Filter (`isStaleReservation`, `plugin.go:149`): holder pod deleted, holder UID changed, holder terminating, holder already bound, or holder's `nominatedNodeName` moved elsewhere.
 - Store semantics (`store.go`): one reservation per node and per holder pod; re-nominating a holder to a new node moves its reservation; a new holder for a node replaces the old reservation. Events `NamespaceResourceGuaranteeNodeReserved` / `...ReservationReleased` / `...ReservationCleanedUp` are emitted on the holder pod.
+- Metrics expose the process-local active reservation count, bounded lifecycle transitions, and scheduling attempts blocked by the Filter, split by profile.
 
 ### 6.3 Critical deployment caveat
 
