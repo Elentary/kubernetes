@@ -92,6 +92,7 @@ func (s *Store) Reserve(nodeName string, pod *v1.Pod, source string) (Reservatio
 	}
 	s.byNode[nodeName] = reservation
 	s.byPod[pod.UID] = nodeName
+	nominatedNodeReservationsActive.Set(float64(len(s.byNode)))
 
 	return reservation, true
 }
@@ -113,6 +114,7 @@ func (s *Store) ReleaseByPod(uid types.UID) (Reservation, bool) {
 
 	delete(s.byPod, uid)
 	delete(s.byNode, nodeName)
+	nominatedNodeReservationsActive.Set(float64(len(s.byNode)))
 	return reservation, true
 }
 
@@ -128,6 +130,7 @@ func (s *Store) ReleaseIfMatches(nodeName string, uid types.UID) (Reservation, b
 
 	delete(s.byNode, nodeName)
 	delete(s.byPod, uid)
+	nominatedNodeReservationsActive.Set(float64(len(s.byNode)))
 	return reservation, true
 }
 
@@ -145,4 +148,5 @@ func (s *Store) Reset() {
 	defer s.mu.Unlock()
 	s.byNode = make(map[string]Reservation)
 	s.byPod = make(map[types.UID]string)
+	nominatedNodeReservationsActive.Set(0)
 }
