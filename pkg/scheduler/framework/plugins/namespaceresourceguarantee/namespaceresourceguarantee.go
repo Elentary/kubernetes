@@ -482,7 +482,7 @@ func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 
 	podPriority := corev1helpers.PodPriority(pod)
 	for _, pi := range nodeInfo.Pods {
-		if corev1helpers.PodPriority(pi.Pod) < podPriority {
+		if corev1helpers.PodPriority(pi.Pod) < podPriority && pl.isEligiblePreemptionVictim(pod, pi.Pod) {
 			potentialVictims = append(potentialVictims, pi)
 			if err := removePod(pi); err != nil {
 				return nil, 0, framework.AsStatus(err)
@@ -557,6 +557,14 @@ func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 		statusCode:            framework.Success,
 	})
 	return victims, numViolatingVictim, framework.NewStatus(framework.Success)
+}
+
+func (pl *NamespaceResourceGuarantee) isEligiblePreemptionVictim(preemptor, victim *v1.Pod) bool {
+	if !pl.args.RestrictGuaranteedPreemptionToManagedNamespaces || pl.podTier(preemptor) != guaranteedTier {
+		return true
+	}
+	_, managed := pl.args.NamespaceGuarantees[victim.Namespace]
+	return managed
 }
 
 func (pl *NamespaceResourceGuarantee) isSchedulableAfterPodChange(logger klog.Logger, pod *v1.Pod, oldObj, newObj interface{}) (framework.QueueingHint, error) {
