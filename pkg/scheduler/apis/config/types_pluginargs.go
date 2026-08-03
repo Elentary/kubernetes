@@ -206,6 +206,12 @@ type NamespaceResourceGuaranteeArgs struct {
 	// NamespaceGuarantees maps namespace to per-resource protected guarantees.
 	// Supported resources are cpu, memory, and extended scalar resources.
 	NamespaceGuarantees map[string]v1.ResourceList
+
+	// RestrictGuaranteedPreemptionToManagedNamespaces limits explicit guaranteed
+	// Pods to preempting Pods from namespaces configured in NamespaceGuarantees.
+	// When false, guaranteed Pods retain the existing cross-namespace preemption
+	// behavior.
+	RestrictGuaranteedPreemptionToManagedNamespaces bool
 }
 
 // ScoringStrategyType the type of scoring strategy used in NodeResourcesFit plugin.
