@@ -62609,6 +62609,13 @@ func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref co
 							},
 						},
 					},
+					"restrictGuaranteedPreemptionToManagedNamespaces": {
+						SchemaProps: spec.SchemaProps{
+							Description: "RestrictGuaranteedPreemptionToManagedNamespaces limits explicit guaranteed Pods to preempting Pods from namespaces configured in NamespaceGuarantees. When omitted, guaranteed Pods retain the existing cross-namespace preemption behavior.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
 				},
 			},
 		},
