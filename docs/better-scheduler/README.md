@@ -15,6 +15,7 @@ This directory is the **source of truth** for the project. The old root `NAMESPA
 | [history.md](history.md) | you want the why behind any version (v0.1 → v0.7), incidents included |
 | [known-issues.md](known-issues.md) | before assuming something is a bug, or planning next work |
 | [design-review.md](design-review.md) | you want the 2026-07 adversarial design review — findings, per-finding reasoning/steelman, mitigations, and the prioritized action plan |
+| [namespace-subquotas-rfc.md](namespace-subquotas-rfc.md) | you want the proposed design for percentage-based sub-quotas, borrowing, and worker reclaim inside one namespace |
 | [better-scheduler-design.pdf](better-scheduler-design.pdf) | you want a single self-contained design doc to send to any developer (source: [design-doc.typ](design-doc.typ), rebuild with `typst compile --input rev=$(git rev-parse --short HEAD) design-doc.typ better-scheduler-design.pdf`) |
 
 ## Components at a Glance

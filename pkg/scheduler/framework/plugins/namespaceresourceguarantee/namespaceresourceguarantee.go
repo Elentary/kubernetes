@@ -72,6 +72,7 @@ const (
 // NamespaceResourceGuarantee enforces per-namespace protected resource guarantees.
 type NamespaceResourceGuarantee struct {
 	handle             framework.Handle
+	profile            string
 	args               config.NamespaceResourceGuaranteeArgs
 	configuredResource []v1.ResourceName
 	pdbLister          policylisters.PodDisruptionBudgetLister
@@ -147,12 +148,14 @@ func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framew
 
 	plugin := &NamespaceResourceGuarantee{
 		handle:             handle,
+		profile:            profileName(handle),
 		args:               *args,
 		configuredResource: configuredResources(args.NamespaceGuarantees),
 		pdbLister:          getPDBLister(handle),
 	}
 	registerMetrics()
-	plugin.recordConfiguredQuotaMetrics(profileName(handle))
+	nominatednodereservation.RegisterMetrics()
+	plugin.recordConfiguredQuotaMetrics(plugin.profile)
 	if handle != nil && handle.SharedInformerFactory() != nil {
 		plugin.evaluator = preemption.NewEvaluator(Name, handle, plugin, utilfeature.DefaultFeatureGate.Enabled(features.SchedulerAsyncPreemption))
 
@@ -160,6 +163,14 @@ func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framew
 		plugin.evaluator.PreemptPod = func(ctx context.Context, c preemption.Candidate, preemptor, victim *v1.Pod, pluginName string) error {
 			if err := originalPreemptPod(ctx, c, preemptor, victim, pluginName); err != nil {
 				return err
+			}
+			if preemptor != nil {
+				tier := plugin.podTier(preemptor)
+				namespaceResourceGuaranteeVictimDeletions.WithLabelValues(
+					plugin.profile,
+					preemptor.Namespace,
+					string(tier),
+				).Inc()
 			}
 			plugin.handle.EventRecorder().Eventf(
 				victim,
@@ -180,7 +191,7 @@ func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framew
 	return plugin, nil
 }
 
-// PreFilter checks whether a protected pod would exceed its tier's namespace resource guarantee.
+// PreFilter checks whether a protected pod would exceed its namespace's shared protected resource guarantee.
 func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
 	tier := pl.podTier(pod)
 	if tier == "" || len(pl.configuredResource) == 0 {
@@ -192,8 +203,9 @@ func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.
 		return nil, nil
 	}
 
-	currentUsage, err := pl.namespaceTierUsage(pod.Namespace, tier)
+	currentUsage, err := pl.namespaceProtectedUsage(pod.Namespace)
 	if err != nil {
+		pl.recordPreFilterDecision(pod, tier, preFilterResultError)
 		return nil, framework.AsStatus(err)
 	}
 
@@ -205,12 +217,13 @@ func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.
 		resourceUsage := currentUsage[resourceName]
 		resourceGuarantee := pl.namespaceGuaranteeValue(pod.Namespace, resourceName)
 		if resourceUsage+resourceRequested > resourceGuarantee {
+			pl.recordPreFilterDecision(pod, tier, preFilterResultQuotaExceeded)
+			pl.recordQuotaExceeded(pod, tier, resourceName)
 			return nil, framework.NewStatus(
 				framework.UnschedulableAndUnresolvable,
 				fmt.Sprintf(
-					"namespace %q %s resource guarantee exceeded: resource=%q guarantee=%d current=%d requested=%d",
+					"namespace %q shared protected resource guarantee exceeded: resource=%q guarantee=%d current=%d requested=%d",
 					pod.Namespace,
-					tier,
 					resourceName,
 					resourceGuarantee,
 					resourceUsage,
@@ -220,6 +233,7 @@ func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.
 		}
 	}
 
+	pl.recordPreFilterDecision(pod, tier, preFilterResultAllowed)
 	return nil, nil
 }
 
@@ -239,16 +253,20 @@ func (pl *NamespaceResourceGuarantee) EventsToRegister(_ context.Context) ([]fra
 }
 
 func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod, m framework.NodeToStatusReader) (*framework.PostFilterResult, *framework.Status) {
-	defer schedmetrics.PreemptionAttempts.Inc()
 	if !pl.isProtectedPod(pod) || len(pl.configuredResource) == 0 {
+		pl.recordPreemptionOutcome(pod, "ordinary", preemptionOutcomeIneligible)
 		return nil, framework.NewStatus(framework.Unschedulable, "namespace resource guarantee preemption is only enabled for protected pods")
 	}
+	tier := string(pl.podTier(pod))
 	if pl.evaluator == nil {
+		pl.recordPreemptionOutcome(pod, tier, preemptionOutcomeError)
 		return nil, framework.NewStatus(framework.Error, "namespace resource guarantee preemption evaluator is not initialized")
 	}
+	defer schedmetrics.PreemptionAttempts.Inc()
 
 	trace, err := pl.newPreemptionTrace(pod)
 	if err != nil {
+		pl.recordPreemptionOutcome(pod, tier, preemptionOutcomeError)
 		return nil, framework.AsStatus(err)
 	}
 	pl.preemptionTrace.Store(pod.UID, trace)
@@ -299,6 +317,7 @@ func (pl *NamespaceResourceGuarantee) syncNominatedNodeReservation(ctx context.C
 	if status != nil && status.IsSuccess() && result != nil && len(result.NominatedNodeName) > 0 {
 		reservation, changed := store.Reserve(result.NominatedNodeName, pod, Name)
 		if changed {
+			nominatednodereservation.RecordTransition("reserved", "preemption_started")
 			logger.V(2).Info("Reserved nominated node for namespace resource guarantee preemption", "preemptor", klog.KObj(pod), "node", reservation.NodeName, "holderUID", reservation.HolderPodUID)
 			pl.handle.EventRecorder().Eventf(
 				pod,
@@ -315,6 +334,7 @@ func (pl *NamespaceResourceGuarantee) syncNominatedNodeReservation(ctx context.C
 
 	if result != nil && result.Mode() == framework.ModeOverride && len(result.NominatedNodeName) == 0 {
 		if released, ok := store.ReleaseByPod(pod.UID); ok {
+			nominatednodereservation.RecordTransition("released", "nomination_cleared")
 			logger.V(2).Info("Released nominated node reservation after preemption cleared nomination", "preemptor", klog.KObj(pod), "node", released.NodeName, "holderUID", released.HolderPodUID)
 			pl.handle.EventRecorder().Eventf(
 				pod,
@@ -338,6 +358,7 @@ func (pl *NamespaceResourceGuarantee) syncNominatedNodeReservation(ctx context.C
 	}
 	if msg == preemptionNoCandidateMessage || strings.Contains(msg, preemptionNotHelpfulFragment) {
 		if released, ok := store.ReleaseByPod(pod.UID); ok {
+			nominatednodereservation.RecordTransition("released", "no_candidate")
 			logger.V(2).Info("Released nominated node reservation after preemption found no candidate", "preemptor", klog.KObj(pod), "node", released.NodeName, "holderUID", released.HolderPodUID, "message", msg)
 			pl.handle.EventRecorder().Eventf(
 				pod,
@@ -563,7 +584,7 @@ func (pl *NamespaceResourceGuarantee) isSchedulableAfterPodChange(logger klog.Lo
 	return framework.QueueSkip, nil
 }
 
-func (pl *NamespaceResourceGuarantee) namespaceTierUsage(namespace string, tier protectedTier) (map[v1.ResourceName]int64, error) {
+func (pl *NamespaceResourceGuarantee) namespaceProtectedUsage(namespace string) (map[v1.ResourceName]int64, error) {
 	usage := make(map[v1.ResourceName]int64, len(pl.configuredResource))
 	for _, resourceName := range pl.configuredResource {
 		usage[resourceName] = 0
@@ -585,7 +606,7 @@ func (pl *NamespaceResourceGuarantee) namespaceTierUsage(namespace string, tier 
 		}
 
 		for _, podInfo := range nodeInfo.Pods {
-			if podInfo.Pod == nil || podInfo.Pod.Spec.NodeName == "" || podInfo.Pod.Namespace != namespace || pl.podTier(podInfo.Pod) != tier {
+			if podInfo.Pod == nil || podInfo.Pod.Spec.NodeName == "" || podInfo.Pod.Namespace != namespace || !pl.isProtectedPod(podInfo.Pod) {
 				continue
 			}
 			requests := pl.podRequests(podInfo.Pod)
@@ -829,6 +850,8 @@ func (pl *NamespaceResourceGuarantee) logPreemptionDecision(
 	defer trace.mu.Unlock()
 
 	event := classifyPreemptionEvent(preemptor, result, status, trace)
+	tier := pl.podTier(preemptor)
+	pl.recordPreemptionOutcome(preemptor, string(tier), preemptionOutcomeForEventReason(event.reason))
 	pl.handle.EventRecorder().Eventf(preemptor, nil, event.eventType, event.reason, "NamespaceResourceGuaranteePostFilter", event.note)
 
 	keyvals := preemptionDecisionLogKeyvals(preemptor, state)

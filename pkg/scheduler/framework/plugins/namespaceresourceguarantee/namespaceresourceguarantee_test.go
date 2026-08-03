@@ -18,6 +18,7 @@ package namespaceresourceguarantee
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -102,7 +103,7 @@ func TestPreFilter(t *testing.T) {
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" guaranteed resource guarantee exceeded: resource="cpu" guarantee=4000 current=3000 requested=1500`,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=3000 requested=1500`,
 		},
 		{
 			name: "missing namespace guarantee defaults to zero",
@@ -116,7 +117,7 @@ func TestPreFilter(t *testing.T) {
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" guaranteed resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
 		},
 		{
 			name: "normal pod bypasses plugin",
@@ -178,10 +179,10 @@ func TestPreFilter(t *testing.T) {
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-a" guaranteed resource guarantee exceeded: resource="nvidia.com/gpu" guarantee=3 current=2 requested=2`,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="nvidia.com/gpu" guarantee=3 current=2 requested=2`,
 		},
 		{
-			name: "semi-guaranteed usage has a cap independent from guaranteed usage",
+			name: "semi-guaranteed pod is capped by combined guaranteed usage",
 			args: tieredArgs(map[string]v1.ResourceList{
 				"team-a": {v1.ResourceCPU: resource.MustParse("4")},
 			}),
@@ -196,11 +197,12 @@ func TestPreFilter(t *testing.T) {
 					v1.ResourceCPU: "1",
 				}),
 			},
-			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: framework.Success,
+			nodes:       []*v1.Node{makeNode("node-a")},
+			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=5000 requested=3000`,
 		},
 		{
-			name: "guaranteed usage has a cap independent from semi-guaranteed usage",
+			name: "guaranteed pod is capped by combined semi-guaranteed usage",
 			args: tieredArgs(map[string]v1.ResourceList{
 				"team-a": {v1.ResourceCPU: resource.MustParse("4")},
 			}),
@@ -215,8 +217,9 @@ func TestPreFilter(t *testing.T) {
 					v1.ResourceCPU: "1",
 				}),
 			},
-			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: framework.Success,
+			nodes:       []*v1.Node{makeNode("node-a")},
+			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=5000 requested=3000`,
 		},
 		{
 			name: "semi-guaranteed pod in an unmanaged namespace is capped at zero",
@@ -228,7 +231,7 @@ func TestPreFilter(t *testing.T) {
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
 			wantCode:    framework.UnschedulableAndUnresolvable,
-			wantMessage: `namespace "team-b" semi-guaranteed resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=1000`,
+			wantMessage: `namespace "team-b" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=1000`,
 		},
 	}
 
@@ -249,6 +252,112 @@ func TestPreFilter(t *testing.T) {
 				t.Fatalf("unexpected status message: got %q, want %q", status.Message(), tt.wantMessage)
 			}
 		})
+	}
+}
+
+func TestPreFilterMetrics(t *testing.T) {
+	resetMetricsForTest()
+	t.Cleanup(resetMetricsForTest)
+
+	ctx := context.Background()
+	args := tieredArgs(map[string]v1.ResourceList{
+		"team-a": {v1.ResourceCPU: resource.MustParse("4")},
+	})
+	newPlugin := func(t *testing.T, lister framework.SharedLister) *NamespaceResourceGuarantee {
+		t.Helper()
+		fh, err := frameworkruntime.NewFramework(
+			ctx,
+			nil,
+			&config.KubeSchedulerProfile{SchedulerName: "test-profile"},
+			frameworkruntime.WithSnapshotSharedLister(lister),
+		)
+		if err != nil {
+			t.Fatalf("failed creating framework runtime: %v", err)
+		}
+		plugin, err := New(ctx, &args, fh)
+		if err != nil {
+			t.Fatalf("failed creating plugin: %v", err)
+		}
+		return plugin.(*NamespaceResourceGuarantee)
+	}
+
+	allowed := makePodWithRequests("allowed", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
+	allowedPlugin := newPlugin(t, internalcache.NewSnapshot(nil, []*v1.Node{makeNode("node-a")}))
+	if _, status := allowedPlugin.PreFilter(ctx, framework.NewCycleState(), allowed); status != nil {
+		t.Fatalf("expected allowed pod to pass, got %v", status)
+	}
+
+	existing := makePodWithRequests("running", "team-a", "protected", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "3"})
+	exceeded := makePodWithRequests("exceeded", "team-a", "semi", "", map[v1.ResourceName]string{v1.ResourceCPU: "2"})
+	exceededPlugin := newPlugin(t, internalcache.NewSnapshot([]*v1.Pod{existing}, []*v1.Node{makeNode("node-a")}))
+	if _, status := exceededPlugin.PreFilter(ctx, framework.NewCycleState(), exceeded); status == nil || status.Code() != framework.UnschedulableAndUnresolvable {
+		t.Fatalf("expected quota-exceeded status, got %v", status)
+	}
+
+	failed := makePodWithRequests("failed", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
+	failedPlugin := newPlugin(t, errorSharedLister{})
+	if _, status := failedPlugin.PreFilter(ctx, framework.NewCycleState(), failed); status == nil || status.Code() != framework.Error {
+		t.Fatalf("expected error status, got %v", status)
+	}
+
+	expected := `
+		# HELP scheduler_namespace_resource_guarantee_prefilter_decisions_total [ALPHA] Number of protected-pod namespace resource guarantee PreFilter decisions.
+		# TYPE scheduler_namespace_resource_guarantee_prefilter_decisions_total counter
+		scheduler_namespace_resource_guarantee_prefilter_decisions_total{namespace="team-a",profile="test-profile",result="allowed",tier="guaranteed"} 1
+		scheduler_namespace_resource_guarantee_prefilter_decisions_total{namespace="team-a",profile="test-profile",result="error",tier="guaranteed"} 1
+		scheduler_namespace_resource_guarantee_prefilter_decisions_total{namespace="team-a",profile="test-profile",result="quota_exceeded",tier="semi-guaranteed"} 1
+		# HELP scheduler_namespace_resource_guarantee_quota_exceeded_total [ALPHA] Number of protected-pod PreFilter decisions rejected because a namespace resource guarantee would be exceeded.
+		# TYPE scheduler_namespace_resource_guarantee_quota_exceeded_total counter
+		scheduler_namespace_resource_guarantee_quota_exceeded_total{namespace="team-a",profile="test-profile",resource="cpu",tier="semi-guaranteed"} 1
+	`
+	if err := testutil.GatherAndCompare(
+		metrics.GetGather(),
+		strings.NewReader(expected),
+		"scheduler_namespace_resource_guarantee_prefilter_decisions_total",
+		"scheduler_namespace_resource_guarantee_quota_exceeded_total",
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPreemptionOutcomeMetrics(t *testing.T) {
+	resetMetricsForTest()
+	t.Cleanup(resetMetricsForTest)
+
+	plugin := &NamespaceResourceGuarantee{
+		profile: "test-profile",
+		args:    tieredArgs(nil),
+	}
+	protected := makePodWithRequests("protected", "team-a", "protected", "", nil)
+	ordinary := makePodWithRequests("ordinary", "team-a", "normal", "", nil)
+
+	for _, reason := range []string{
+		preemptionStartedReason,
+		preemptionWaitingReason,
+		preemptionNotHelpfulReason,
+		preemptionNoCandidateReason,
+		preemptionErrorReason,
+	} {
+		plugin.recordPreemptionOutcome(protected, string(plugin.podTier(protected)), preemptionOutcomeForEventReason(reason))
+	}
+	plugin.recordPreemptionOutcome(ordinary, "ordinary", preemptionOutcomeIneligible)
+
+	expected := `
+		# HELP scheduler_namespace_resource_guarantee_preemption_outcomes_total [ALPHA] Number of NamespaceResourceGuarantee PostFilter outcomes.
+		# TYPE scheduler_namespace_resource_guarantee_preemption_outcomes_total counter
+		scheduler_namespace_resource_guarantee_preemption_outcomes_total{namespace="team-a",outcome="error",profile="test-profile",tier="guaranteed"} 1
+		scheduler_namespace_resource_guarantee_preemption_outcomes_total{namespace="team-a",outcome="ineligible",profile="test-profile",tier="ordinary"} 1
+		scheduler_namespace_resource_guarantee_preemption_outcomes_total{namespace="team-a",outcome="no_candidate",profile="test-profile",tier="guaranteed"} 1
+		scheduler_namespace_resource_guarantee_preemption_outcomes_total{namespace="team-a",outcome="not_helpful",profile="test-profile",tier="guaranteed"} 1
+		scheduler_namespace_resource_guarantee_preemption_outcomes_total{namespace="team-a",outcome="started",profile="test-profile",tier="guaranteed"} 1
+		scheduler_namespace_resource_guarantee_preemption_outcomes_total{namespace="team-a",outcome="waiting",profile="test-profile",tier="guaranteed"} 1
+	`
+	if err := testutil.GatherAndCompare(
+		metrics.GetGather(),
+		strings.NewReader(expected),
+		"scheduler_namespace_resource_guarantee_preemption_outcomes_total",
+	); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -498,6 +607,16 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			expectedHint: framework.Queue,
 		},
 		{
+			name: "same namespace semi-guaranteed cpu pod deleted",
+			targetPod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "1",
+			}),
+			oldObj: makePodWithRequests("running", "team-a", "semi", "node-a", map[v1.ResourceName]string{
+				v1.ResourceCPU: "2",
+			}),
+			expectedHint: framework.Queue,
+		},
+		{
 			name: "other namespace protected cpu pod deleted",
 			targetPod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
 				v1.ResourceCPU: "1",
@@ -553,7 +672,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 	}
 
 	pl := &NamespaceResourceGuarantee{
-		args: newArgs(map[string]v1.ResourceList{
+		args: tieredArgs(map[string]v1.ResourceList{
 			"team-a": {
 				v1.ResourceCPU:    resource.MustParse("1"),
 				v1.ResourceMemory: resource.MustParse("2Gi"),
@@ -848,6 +967,8 @@ func TestPreFilterDoesNotEmitEvents(t *testing.T) {
 var nodeResourcesFitFunc = frameworkruntime.FactoryAdapter(feature.Features{}, noderesources.NewFit)
 
 func TestPostFilterEmitsStartedEventEndToEnd(t *testing.T) {
+	resetMetricsForTest()
+	t.Cleanup(resetMetricsForTest)
 	metrics.Register()
 
 	preemptor := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
@@ -948,6 +1069,18 @@ func TestPostFilterEmitsStartedEventEndToEnd(t *testing.T) {
 			}
 			if !strings.Contains(event, "victim termination may still be in progress") {
 				t.Fatalf("expected non-terminal note in event, got %q", event)
+			}
+			expected := `
+				# HELP scheduler_namespace_resource_guarantee_victim_deletions_total [ALPHA] Number of successful preemption victim deletion requests initiated by NamespaceResourceGuarantee.
+				# TYPE scheduler_namespace_resource_guarantee_victim_deletions_total counter
+				scheduler_namespace_resource_guarantee_victim_deletions_total{namespace="team-a",profile="",tier="guaranteed"} 1
+			`
+			if err := testutil.GatherAndCompare(
+				metrics.GetGather(),
+				strings.NewReader(expected),
+				"scheduler_namespace_resource_guarantee_victim_deletions_total",
+			); err != nil {
+				t.Fatal(err)
 			}
 			return
 		case <-deadline:
@@ -1084,6 +1217,34 @@ func (noopPodNominator) DeleteNominatedPodIfExists(*v1.Pod) {}
 func (noopPodNominator) UpdateNominatedPod(klog.Logger, *v1.Pod, *framework.PodInfo) {}
 
 func (noopPodNominator) NominatedPodsForNode(string) []*framework.PodInfo { return nil }
+
+type errorSharedLister struct{}
+
+func (errorSharedLister) NodeInfos() framework.NodeInfoLister {
+	return errorNodeInfoLister{}
+}
+
+func (errorSharedLister) StorageInfos() framework.StorageInfoLister {
+	return nil
+}
+
+type errorNodeInfoLister struct{}
+
+func (errorNodeInfoLister) List() ([]*framework.NodeInfo, error) {
+	return nil, errors.New("snapshot list failed")
+}
+
+func (errorNodeInfoLister) HavePodsWithAffinityList() ([]*framework.NodeInfo, error) {
+	return nil, errors.New("snapshot list failed")
+}
+
+func (errorNodeInfoLister) HavePodsWithRequiredAntiAffinityList() ([]*framework.NodeInfo, error) {
+	return nil, errors.New("snapshot list failed")
+}
+
+func (errorNodeInfoLister) Get(string) (*framework.NodeInfo, error) {
+	return nil, errors.New("snapshot get failed")
+}
 
 func TestSyncNominatedNodeReservationLifecycle(t *testing.T) {
 	nominatednodereservation.ResetSharedStoreForTest()

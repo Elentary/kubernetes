@@ -137,7 +137,7 @@ Type: `pkg/scheduler/apis/config/types_pluginargs.go` (internal), `staging/src/k
 | protectedPriorityClassName | string, required | PriorityClass name identifying explicit guaranteed pods (exact match on spec.priorityClassName) |
 | semiProtectedPriorityClassName | string, optional | PriorityClass for admission-assigned semi-guaranteed Pods; enables the two-tier mode |
 | admissionAssignedTierNamespaces | []string, required when semi tier is set | Namespaces permitted to receive semi-guaranteed classification; each must occur in namespaceGuarantees |
-| `namespaceGuarantees` | `map[namespace]ResourceList`, required | Per-namespace guarantees. A namespace or resource missing from the map has guarantee **0** — guaranteed pods from unlisted namespaces requesting a configured resource can never schedule |
+| `namespaceGuarantees` | `map[namespace]ResourceList`, required | Per-namespace shared protected guarantee. A namespace or resource missing from the map has guarantee **0** — protected pods from unlisted namespaces requesting a configured resource can never schedule |
 
 Validation rules (config is rejected at scheduler startup otherwise):
 
@@ -164,9 +164,9 @@ spec:
 With admission-assigned tiers enabled, the external webhook sets
 semi-guaranteed for ordinary Pods that fit its conservative namespace charge,
 and routes both protected classes to better-scheduler. The scheduler enforces
-independent physical caps for the guaranteed and semi-guaranteed classes:
-either may use one namespace quota when capacity exists; guaranteed work
-preempts semi-guaranteed work under pressure.
+one shared physical cap: guaranteed plus semi-guaranteed requests cannot exceed
+the namespace quota. A separate entitlement reclaimer evicts semi-guaranteed
+Pods when guaranteed demand needs headroom.
 
 Example PriorityClass:
 

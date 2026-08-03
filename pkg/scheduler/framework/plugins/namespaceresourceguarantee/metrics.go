@@ -25,6 +25,19 @@ import (
 	schedmetrics "k8s.io/kubernetes/pkg/scheduler/metrics"
 )
 
+const (
+	preFilterResultAllowed       = "allowed"
+	preFilterResultQuotaExceeded = "quota_exceeded"
+	preFilterResultError         = "error"
+
+	preemptionOutcomeIneligible  = "ineligible"
+	preemptionOutcomeStarted     = "started"
+	preemptionOutcomeWaiting     = "waiting"
+	preemptionOutcomeNotHelpful  = "not_helpful"
+	preemptionOutcomeNoCandidate = "no_candidate"
+	preemptionOutcomeError       = "error"
+)
+
 var (
 	namespaceResourceGuaranteeQuota = metrics.NewGaugeVec(
 		&metrics.GaugeOpts{
@@ -46,6 +59,46 @@ var (
 		[]string{"profile", "priority_class"},
 	)
 
+	namespaceResourceGuaranteePreFilterDecisions = metrics.NewCounterVec(
+		&metrics.CounterOpts{
+			Subsystem:      schedmetrics.SchedulerSubsystem,
+			Name:           "namespace_resource_guarantee_prefilter_decisions_total",
+			Help:           "Number of protected-pod namespace resource guarantee PreFilter decisions.",
+			StabilityLevel: metrics.ALPHA,
+		},
+		[]string{"profile", "namespace", "tier", "result"},
+	)
+
+	namespaceResourceGuaranteeQuotaExceeded = metrics.NewCounterVec(
+		&metrics.CounterOpts{
+			Subsystem:      schedmetrics.SchedulerSubsystem,
+			Name:           "namespace_resource_guarantee_quota_exceeded_total",
+			Help:           "Number of protected-pod PreFilter decisions rejected because a namespace resource guarantee would be exceeded.",
+			StabilityLevel: metrics.ALPHA,
+		},
+		[]string{"profile", "namespace", "tier", "resource"},
+	)
+
+	namespaceResourceGuaranteePreemptionOutcomes = metrics.NewCounterVec(
+		&metrics.CounterOpts{
+			Subsystem:      schedmetrics.SchedulerSubsystem,
+			Name:           "namespace_resource_guarantee_preemption_outcomes_total",
+			Help:           "Number of NamespaceResourceGuarantee PostFilter outcomes.",
+			StabilityLevel: metrics.ALPHA,
+		},
+		[]string{"profile", "namespace", "tier", "outcome"},
+	)
+
+	namespaceResourceGuaranteeVictimDeletions = metrics.NewCounterVec(
+		&metrics.CounterOpts{
+			Subsystem:      schedmetrics.SchedulerSubsystem,
+			Name:           "namespace_resource_guarantee_victim_deletions_total",
+			Help:           "Number of successful preemption victim deletion requests initiated by NamespaceResourceGuarantee.",
+			StabilityLevel: metrics.ALPHA,
+		},
+		[]string{"profile", "namespace", "tier"},
+	)
+
 	registerMetricsOnce sync.Once
 )
 
@@ -54,8 +107,63 @@ func registerMetrics() {
 		schedmetrics.RegisterMetrics(
 			namespaceResourceGuaranteeQuota,
 			namespaceResourceGuaranteeProtectedPriorityClassInfo,
+			namespaceResourceGuaranteePreFilterDecisions,
+			namespaceResourceGuaranteeQuotaExceeded,
+			namespaceResourceGuaranteePreemptionOutcomes,
+			namespaceResourceGuaranteeVictimDeletions,
 		)
 	})
+}
+
+func resetMetricsForTest() {
+	namespaceResourceGuaranteeQuota.Reset()
+	namespaceResourceGuaranteeProtectedPriorityClassInfo.Reset()
+	namespaceResourceGuaranteePreFilterDecisions.Reset()
+	namespaceResourceGuaranteeQuotaExceeded.Reset()
+	namespaceResourceGuaranteePreemptionOutcomes.Reset()
+	namespaceResourceGuaranteeVictimDeletions.Reset()
+}
+
+func (pl *NamespaceResourceGuarantee) recordPreFilterDecision(pod *v1.Pod, tier protectedTier, result string) {
+	namespaceResourceGuaranteePreFilterDecisions.WithLabelValues(
+		pl.profile,
+		pod.Namespace,
+		string(tier),
+		result,
+	).Inc()
+}
+
+func (pl *NamespaceResourceGuarantee) recordQuotaExceeded(pod *v1.Pod, tier protectedTier, resourceName v1.ResourceName) {
+	namespaceResourceGuaranteeQuotaExceeded.WithLabelValues(
+		pl.profile,
+		pod.Namespace,
+		string(tier),
+		string(resourceName),
+	).Inc()
+}
+
+func (pl *NamespaceResourceGuarantee) recordPreemptionOutcome(pod *v1.Pod, tier, outcome string) {
+	namespaceResourceGuaranteePreemptionOutcomes.WithLabelValues(
+		pl.profile,
+		pod.Namespace,
+		tier,
+		outcome,
+	).Inc()
+}
+
+func preemptionOutcomeForEventReason(reason string) string {
+	switch reason {
+	case preemptionStartedReason:
+		return preemptionOutcomeStarted
+	case preemptionWaitingReason:
+		return preemptionOutcomeWaiting
+	case preemptionNotHelpfulReason:
+		return preemptionOutcomeNotHelpful
+	case preemptionNoCandidateReason:
+		return preemptionOutcomeNoCandidate
+	default:
+		return preemptionOutcomeError
+	}
 }
 
 func (pl *NamespaceResourceGuarantee) recordConfiguredQuotaMetrics(profile string) {
