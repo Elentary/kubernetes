@@ -215,7 +215,10 @@ type NamespaceResourceGuaranteeArgs struct {
 	AdmissionAssignedTierNamespaces []string `json:"admissionAssignedTierNamespaces,omitempty"`
 
 	// NamespaceGuarantees maps namespace to per-resource protected guarantees.
-	// Supported resources are cpu, memory, and extended scalar resources.
+	// Supported resources are cpu, memory, and extended scalar resources. For a
+	// namespace present in the map, an omitted resource is not capped. A
+	// namespace absent from the map has zero guarantee for resources configured
+	// anywhere in the map.
 	// +mapType=granular
 	NamespaceGuarantees map[string]corev1.ResourceList `json:"namespaceGuarantees,omitempty"`
 

@@ -209,7 +209,15 @@ func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.
 		return nil, framework.AsStatus(err)
 	}
 
+	_, namespaceConfigured := pl.args.NamespaceGuarantees[pod.Namespace]
 	for _, resourceName := range pl.configuredResource {
+		// A configured namespace is capped only for resources it explicitly lists.
+		// Keep the zero-guarantee backstop for namespaces absent from the map.
+		if namespaceConfigured {
+			if _, resourceConfigured := pl.args.NamespaceGuarantees[pod.Namespace][resourceName]; !resourceConfigured {
+				continue
+			}
+		}
 		resourceRequested := requested[resourceName]
 		if resourceRequested == 0 {
 			continue

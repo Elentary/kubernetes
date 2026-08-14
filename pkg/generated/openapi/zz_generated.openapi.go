@@ -62589,7 +62589,7 @@ func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref co
 							},
 						},
 						SchemaProps: spec.SchemaProps{
-							Description: "NamespaceGuarantees maps namespace to per-resource protected guarantees. Supported resources are cpu, memory, and extended scalar resources.",
+							Description: "NamespaceGuarantees maps namespace to per-resource protected guarantees. Supported resources are cpu, memory, and extended scalar resources. For a namespace present in the map, an omitted resource is not capped. A namespace absent from the map has zero guarantee for resources configured anywhere in the map.",
 							Type:        []string{"object"},
 							AdditionalProperties: &spec.SchemaOrBool{
 								Allows: true,
