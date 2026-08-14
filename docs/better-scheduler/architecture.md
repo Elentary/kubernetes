@@ -67,7 +67,7 @@ The plugin implements six extension points (see the `var _ framework.X` assertio
 1. If the pod is not guaranteed (`spec.priorityClassName != protectedPriorityClassName`) or no resources are configured, do nothing — the pod follows default scheduling behavior.
 2. Compute the pod's requests for each configured resource (cpu, memory, extended scalar resources such as `nvidia.com/gpu`). Pods requesting zero of every configured resource are ignored.
 3. Compute current guaranteed usage in the pod's namespace from the scheduler snapshot (`namespaceProtectedUsage`): only guaranteed pods, only the same namespace, only pods already assigned to a node (`spec.nodeName != ""`).
-4. Enforce each configured resource independently: `currentUsage + requested <= namespaceGuarantee`. A namespace or resource missing from the config means guarantee `0`.
+4. Enforce each resource listed for the pod's configured namespace independently: `currentUsage + requested <= namespaceGuarantee`. An omitted resource is uncapped for a configured namespace. A namespace absent from the config has guarantee `0` for resources configured anywhere.
 
 On failure the pod gets `UnschedulableAndUnresolvable` with a message of the form:
 
