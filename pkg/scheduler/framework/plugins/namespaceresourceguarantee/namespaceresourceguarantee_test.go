@@ -120,6 +120,64 @@ func TestPreFilter(t *testing.T) {
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
 		},
 		{
+			name: "configured namespace does not cap an omitted resource",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {
+					v1.ResourceCPU:    resource.MustParse("4"),
+					v1.ResourceMemory: resource.MustParse("16Gi"),
+				},
+				"team-b": {
+					v1.ResourceCPU: resource.MustParse("4"),
+				},
+			}),
+			pod: makePodWithRequests("incoming", "team-b", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU:    "1",
+				v1.ResourceMemory: "4Gi",
+			}),
+			nodes:    []*v1.Node{makeNode("node-a")},
+			wantCode: framework.Success,
+		},
+		{
+			name: "configured namespace still caps its listed resource",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {
+					v1.ResourceMemory: resource.MustParse("16Gi"),
+				},
+				"team-b": {
+					v1.ResourceCPU: resource.MustParse("1"),
+				},
+			}),
+			pod: makePodWithRequests("incoming", "team-b", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU:    "1",
+				v1.ResourceMemory: "4Gi",
+			}),
+			existingPods: []*v1.Pod{
+				makePodWithRequests("running", "team-b", "protected", "node-a", map[v1.ResourceName]string{
+					v1.ResourceCPU: "1",
+				}),
+			},
+			nodes:       []*v1.Node{makeNode("node-a")},
+			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantMessage: `namespace "team-b" shared protected resource guarantee exceeded: resource="cpu" guarantee=1000 current=1000 requested=1000`,
+		},
+		{
+			name: "explicit zero guarantee remains a hard cap",
+			args: newArgs(map[string]v1.ResourceList{
+				"team-a": {
+					v1.ResourceCPU: resource.MustParse("0"),
+				},
+				"team-b": {
+					v1.ResourceMemory: resource.MustParse("16Gi"),
+				},
+			}),
+			pod: makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
+				v1.ResourceCPU: "100m",
+			}),
+			nodes:       []*v1.Node{makeNode("node-a")},
+			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
+		},
+		{
 			name: "normal pod bypasses plugin",
 			args: newArgs(map[string]v1.ResourceList{
 				"team-a": {

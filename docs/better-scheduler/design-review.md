@@ -39,6 +39,8 @@ Cross-cutting themes, the balance section (what is genuinely good), a prioritize
 <a name="f1"></a>
 ## F1. Guarantee resource set is a cluster-wide union — one team's config silently breaks another team's scheduling
 
+**Resolution (2026-08-14):** Fixed. The plugin still keeps the global resource union used by its existing accounting and preemption paths, along with the zero-guarantee backstop for namespaces absent from `namespaceGuarantees`, but `PreFilter` now enforces only resources explicitly listed for a configured namespace. The historical analysis below describes the pre-fix behavior; its proposed alternative semantics are now implemented.
+
 **Category:** design flaw (config semantics). **Severity:** High — produces permanently-Pending guaranteed pods, the exact failure the system promises to prevent, triggered by an unrelated team's config change. **Likelihood:** near-certain on any config where namespaces list different resource sets; the docs' own example is such a config.
 
 ### Mechanism and reasoning

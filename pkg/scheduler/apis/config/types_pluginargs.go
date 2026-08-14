@@ -206,7 +206,10 @@ type NamespaceResourceGuaranteeArgs struct {
 	AdmissionAssignedTierNamespaces []string
 
 	// NamespaceGuarantees maps namespace to per-resource protected guarantees.
-	// Supported resources are cpu, memory, and extended scalar resources.
+	// Supported resources are cpu, memory, and extended scalar resources. For a
+	// namespace present in the map, an omitted resource is not capped. A
+	// namespace absent from the map has zero guarantee for resources configured
+	// anywhere in the map.
 	NamespaceGuarantees map[string]v1.ResourceList
 
 	// RestrictGuaranteedPreemptionToManagedNamespaces limits explicit guaranteed
