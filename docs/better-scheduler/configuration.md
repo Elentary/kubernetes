@@ -63,7 +63,9 @@ profiles:
           admissionAssignedTierNamespaces:
             - team-a
             - team-b
-          restrictGuaranteedPreemptionToManagedNamespaces: true
+          restrictPreemptionToManagedNamespaces:
+            - guaranteed
+            - semi-guaranteed
           preferNonRDMANodesForGuaranteedGPU: false  # opt in after validating GPU/RDMA placement
           namespaceGuarantees:
             team-a:
@@ -141,17 +143,28 @@ Type: `pkg/scheduler/apis/config/types_pluginargs.go` (internal), `staging/src/k
 | semiProtectedPriorityClassName | string, optional | PriorityClass for admission-assigned semi-guaranteed Pods; enables the two-tier mode |
 | admissionAssignedTierNamespaces | []string, required when semi tier is set | Namespaces permitted to receive semi-guaranteed classification; each must occur in namespaceGuarantees |
 | `namespaceGuarantees` | `map[namespace]ResourceList`, required | Per-namespace shared protected guarantee. A configured namespace is capped only for resources it lists; an omitted resource is uncapped. A namespace absent from the map has guarantee **0** for resources configured anywhere, so protected pods from unlisted namespaces requesting those resources cannot schedule |
-| restrictGuaranteedPreemptionToManagedNamespaces | bool, optional | When true, explicit guaranteed Pods may preempt only lower-priority Pods from a managed namespace (a key in namespaceGuarantees). Defaults to false and does not affect semi-guaranteed Pods. |
+| restrictPreemptionToManagedNamespaces | []string, optional | Incoming Pods whose PriorityClass name is listed may preempt only lower-priority Pods from a managed namespace (a key in namespaceGuarantees). Entries select from the configured protectedPriorityClassName and semiProtectedPriorityClassName. An empty or omitted list disables this restriction. |
 | `preferNonRDMANodesForGuaranteedGPU` | bool, optional, default `false` | For explicit guaranteed GPU Pods without an RDMA request, exhaust ordinary placements without PDB violations before using RDMA nodes. Requires the plugin in PreFilter, Filter and PostFilter, with DefaultPreemption disabled. |
 
 Validation rules (config is rejected at scheduler startup otherwise):
 
 - `protectedPriorityClassName` must be non-empty.
 - When configured, semiProtectedPriorityClassName must differ from the guaranteed class and the enabled namespace list must be non-empty, unique, and covered by namespaceGuarantees.
+- `restrictPreemptionToManagedNamespaces` entries must be non-empty, unique, and exactly match `protectedPriorityClassName` or a non-empty `semiProtectedPriorityClassName`. Custom class names are supported through these fields; other names are rejected.
 - `namespaceGuarantees` must be non-empty and contain at least one resource guarantee overall; namespace keys must be non-empty.
 - Resources must be `cpu`, `memory`, or extended scalar resources (e.g. `nvidia.com/gpu`).
 - Quantities must be `>= 0`; extended resources must be integers (`"2"` ok, `"1500m"` rejected).
 - cpu is accounted in millicores internally, so fractional cpu guarantees (`"500m"`) work.
+
+The former `restrictGuaranteedPreemptionToManagedNamespaces` boolean is no longer
+accepted. To preserve its `true` behavior, set `restrictPreemptionToManagedNamespaces`
+to a list containing the value of `protectedPriorityClassName`. Add the value of
+`semiProtectedPriorityClassName` to also restrict admission-assigned Pods. For the
+former `false` or omitted setting, omit the new field or use `[]`.
+Update the scheduler binary and configuration together; restore the old format
+when rolling back to a binary that expects the boolean. This setting applies to
+`NamespaceResourceGuarantee` preemption, including RDMA fallback. It does not
+configure `DefaultPreemption` or the external reclaimer.
 
 ### 3.1 RDMA fallback for guaranteed GPU Pods
 

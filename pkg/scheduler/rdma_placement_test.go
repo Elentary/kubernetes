@@ -230,7 +230,7 @@ func TestRDMAPlacementOrder(t *testing.T) {
 		}, host: "node2"},
 		{name: "GPU plus RDMA is unaffected", setup: func(f *rdmaFixture) { f.pod.Spec.Containers[0].Resources.Requests[testRDMA] = resource.MustParse("1") }, host: "node2"},
 		{name: "managed namespace restriction preserved", setup: func(f *rdmaFixture) {
-			f.args.RestrictGuaranteedPreemptionToManagedNamespaces = true
+			f.args.RestrictPreemptionToManagedNamespaces = []string{f.args.ProtectedPriorityClassName}
 			p := rdmaPod("unmanaged", "node1", 0)
 			p.Namespace = "unmanaged"
 			f.pods = []*v1.Pod{p}

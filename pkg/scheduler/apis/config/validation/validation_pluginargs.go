@@ -365,6 +365,28 @@ func ValidateNamespaceResourceGuaranteeArgs(path *field.Path, args *config.Names
 		allErrs = append(allErrs, field.Required(namespacesPath, "must not be empty when semiProtectedPriorityClassName is configured"))
 	}
 
+	restrictedClassesPath := path.Child("restrictPreemptionToManagedNamespaces")
+	supportedClasses := sets.New(args.ProtectedPriorityClassName)
+	if len(args.SemiProtectedPriorityClassName) > 0 {
+		supportedClasses.Insert(args.SemiProtectedPriorityClassName)
+	}
+	seenClasses := sets.New[string]()
+	for i, class := range args.RestrictPreemptionToManagedNamespaces {
+		itemPath := restrictedClassesPath.Index(i)
+		if len(class) == 0 {
+			allErrs = append(allErrs, field.Invalid(itemPath, class, "priority class must not be empty"))
+			continue
+		}
+		if seenClasses.Has(class) {
+			allErrs = append(allErrs, field.Duplicate(itemPath, class))
+			continue
+		}
+		seenClasses.Insert(class)
+		if !supportedClasses.Has(class) {
+			allErrs = append(allErrs, field.NotSupported(itemPath, class, sets.List(supportedClasses)))
+		}
+	}
+
 	guaranteesPath := path.Child("namespaceGuarantees")
 	if len(args.NamespaceGuarantees) == 0 {
 		allErrs = append(allErrs, field.Required(guaranteesPath, "must not be empty"))
