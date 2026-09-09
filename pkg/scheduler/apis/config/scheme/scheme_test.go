@@ -18,6 +18,7 @@ package scheme
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -502,6 +503,74 @@ profiles:
 			if diff := cmp.Diff(tt.wantProfiles, got.Profiles); diff != "" {
 				t.Errorf("unexpected configuration (-want,+got):\n%s", diff)
 			}
+		})
+	}
+}
+
+func TestCodecsDecodeNamespaceResourceGuaranteePreemptionRestriction(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		field   string
+		classes []string
+		wantErr string
+	}{
+		{name: "omitted"},
+		{name: "empty", field: "restrictPreemptionToManagedNamespaces: []", classes: []string{}},
+		{name: "guaranteed", field: "restrictPreemptionToManagedNamespaces: [guaranteed]", classes: []string{"guaranteed"}},
+		{name: "semi-guaranteed", field: "restrictPreemptionToManagedNamespaces: [semi-guaranteed]", classes: []string{"semi-guaranteed"}},
+		{name: "both", field: "restrictPreemptionToManagedNamespaces:\n      - guaranteed\n      - semi-guaranteed", classes: []string{"guaranteed", "semi-guaranteed"}},
+		{
+			name:    "old true flag rejected",
+			field:   "restrictGuaranteedPreemptionToManagedNamespaces: true",
+			wantErr: `unknown field "restrictGuaranteedPreemptionToManagedNamespaces"`,
+		},
+		{
+			name:    "old false flag rejected",
+			field:   "restrictGuaranteedPreemptionToManagedNamespaces: false",
+			wantErr: `unknown field "restrictGuaranteedPreemptionToManagedNamespaces"`,
+		},
+		{
+			name:    "old flag alongside new list rejected",
+			field:   "restrictPreemptionToManagedNamespaces: [guaranteed]\n      restrictGuaranteedPreemptionToManagedNamespaces: true",
+			wantErr: `unknown field "restrictGuaranteedPreemptionToManagedNamespaces"`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data := []byte(`apiVersion: kubescheduler.config.k8s.io/v1
+kind: KubeSchedulerConfiguration
+profiles:
+- pluginConfig:
+  - name: NamespaceResourceGuarantee
+    args:
+      protectedPriorityClassName: guaranteed
+      semiProtectedPriorityClassName: semi-guaranteed
+      admissionAssignedTierNamespaces: [team-a]
+      namespaceGuarantees:
+        team-a:
+          cpu: "1"
+      ` + tt.field + "\n")
+			obj, _, err := Codecs.UniversalDecoder().Decode(data, nil, nil)
+			if tt.wantErr != "" {
+				if !runtime.IsStrictDecodingError(err) || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected strict decoding error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("decoding configuration: %v", err)
+			}
+			cfg := obj.(*config.KubeSchedulerConfiguration)
+			for _, plugin := range cfg.Profiles[0].PluginConfig {
+				if plugin.Name != "NamespaceResourceGuarantee" {
+					continue
+				}
+				args := plugin.Args.(*config.NamespaceResourceGuaranteeArgs)
+				if diff := cmp.Diff(tt.classes, args.RestrictPreemptionToManagedNamespaces); diff != "" {
+					t.Fatalf("decoded restriction (-want,+got):\n%s", diff)
+				}
+				return
+			}
+			t.Fatal("NamespaceResourceGuarantee args missing from decoded configuration")
 		})
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -602,7 +603,7 @@ func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 }
 
 func (pl *NamespaceResourceGuarantee) isEligiblePreemptionVictim(preemptor, victim *v1.Pod) bool {
-	if !pl.args.RestrictGuaranteedPreemptionToManagedNamespaces || pl.podTier(preemptor) != guaranteedTier {
+	if !slices.Contains(pl.args.RestrictPreemptionToManagedNamespaces, preemptor.Spec.PriorityClassName) {
 		return true
 	}
 	_, managed := pl.args.NamespaceGuarantees[victim.Namespace]

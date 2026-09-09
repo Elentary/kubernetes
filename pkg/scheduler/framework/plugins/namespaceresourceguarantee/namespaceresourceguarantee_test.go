@@ -316,18 +316,20 @@ func TestPreFilter(t *testing.T) {
 func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 	metrics.Register()
 
-	tests := []struct {
+	type testCase struct {
 		name             string
-		restrict         bool
+		restrict         []string
 		preemptorClass   string
 		victimNamespaces []string
+		victimPriority   int32
 		allocatableCPU   string
 		wantVictimNames  []string
 		wantStatusCode   framework.Code
-	}{
+	}
+	tests := []testCase{
 		{
 			name:             "guaranteed preemptor selects only managed namespace victims when restricted",
-			restrict:         true,
+			restrict:         []string{"protected", "semi"},
 			preemptorClass:   "protected",
 			victimNamespaces: []string{"team-b", "unmanaged"},
 			allocatableCPU:   "2",
@@ -335,30 +337,61 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 			wantStatusCode:   framework.Success,
 		},
 		{
-			name:             "guaranteed preemptor cannot select only unmanaged victims when restricted",
-			restrict:         true,
-			preemptorClass:   "protected",
-			victimNamespaces: []string{"unmanaged"},
-			allocatableCPU:   "1",
-			wantStatusCode:   framework.UnschedulableAndUnresolvable,
-		},
-		{
-			name:             "omitted restriction retains unmanaged victim eligibility",
-			preemptorClass:   "protected",
-			victimNamespaces: []string{"unmanaged"},
-			allocatableCPU:   "1",
-			wantVictimNames:  []string{"victim-0"},
-			wantStatusCode:   framework.Success,
-		},
-		{
-			name:             "restriction does not apply to semi-guaranteed preemptor",
-			restrict:         true,
+			name:             "semi-guaranteed preemptor selects only managed namespace victims when restricted",
+			restrict:         []string{"protected", "semi"},
 			preemptorClass:   "semi",
-			victimNamespaces: []string{"unmanaged"},
-			allocatableCPU:   "1",
+			victimNamespaces: []string{"team-b", "unmanaged"},
+			allocatableCPU:   "2",
 			wantVictimNames:  []string{"victim-0"},
 			wantStatusCode:   framework.Success,
 		},
+	}
+
+	// The configured names deliberately differ from the conventional tier names.
+	for _, restriction := range []struct {
+		name           string
+		classes        []string
+		wantRestricted [2]bool
+	}{
+		{name: "omitted"},
+		{name: "empty", classes: []string{}},
+		{name: "guaranteed only", classes: []string{"protected"}, wantRestricted: [2]bool{true, false}},
+		{name: "semi-guaranteed only", classes: []string{"semi"}, wantRestricted: [2]bool{false, true}},
+		{name: "both", classes: []string{"protected", "semi"}, wantRestricted: [2]bool{true, true}},
+	} {
+		for i, class := range []string{"protected", "semi"} {
+			for _, namespace := range []string{"team-b", "unmanaged"} {
+				tt := testCase{
+					name:             fmt.Sprintf("%s/preemptor=%s/victimNamespace=%s", restriction.name, class, namespace),
+					restrict:         restriction.classes,
+					preemptorClass:   class,
+					victimNamespaces: []string{namespace},
+					allocatableCPU:   "1",
+					wantVictimNames:  []string{"victim-0"},
+					wantStatusCode:   framework.Success,
+				}
+				if namespace == "unmanaged" && restriction.wantRestricted[i] {
+					tt.wantVictimNames = nil
+					tt.wantStatusCode = framework.UnschedulableAndUnresolvable
+				}
+				tests = append(tests, tt)
+			}
+		}
+	}
+	for _, class := range []string{"protected", "semi"} {
+		for _, priority := range []int32{1000, 1001} {
+			for _, restriction := range [][]string{nil, {"protected", "semi"}} {
+				tests = append(tests, testCase{
+					name:             fmt.Sprintf("preemptor=%s/victimPriority=%d/restrictedClasses=%v", class, priority, restriction),
+					restrict:         restriction,
+					preemptorClass:   class,
+					victimNamespaces: []string{"team-b"},
+					victimPriority:   priority,
+					allocatableCPU:   "1",
+					wantStatusCode:   framework.UnschedulableAndUnresolvable,
+				})
+			}
+		}
 	}
 
 	for _, tt := range tests {
@@ -369,7 +402,7 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 			victims := make([]*v1.Pod, 0, len(tt.victimNamespaces))
 			for i, namespace := range tt.victimNamespaces {
 				victim := makePodWithRequests(fmt.Sprintf("victim-%d", i), namespace, "normal", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
-				victim.Spec.Priority = ptrTo(int32(0))
+				victim.Spec.Priority = ptrTo(tt.victimPriority)
 				victims = append(victims, victim)
 			}
 			node := makeNode("node-a")
@@ -396,7 +429,7 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 				"team-a": {v1.ResourceCPU: resource.MustParse("10")},
 				"team-b": {v1.ResourceCPU: resource.MustParse("10")},
 			})
-			args.RestrictGuaranteedPreemptionToManagedNamespaces = tt.restrict
+			args.RestrictPreemptionToManagedNamespaces = tt.restrict
 			plugin := &NamespaceResourceGuarantee{
 				handle:             fh,
 				args:               args,
