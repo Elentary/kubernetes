@@ -80,6 +80,10 @@ func SchedulingDecisionAttemptFromState(state *CycleState) int {
 // Note: CycleState uses a sync.Map to back the storage, because it is thread safe. It's aimed to optimize for the "write once and read many times" scenarios.
 // It is the recommended pattern used in all in-tree plugins - plugin-specific state is written once in PreFilter/PreScore and afterward read many times in Filter/Score.
 type CycleState struct {
+	// IsSchedulingRetry reuses the snapshot for a bounded PostFilter fallback.
+	IsSchedulingRetry bool
+	// IsPreemptionDryRun prohibits reservation mutations while evaluating victims.
+	IsPreemptionDryRun bool
 	// storage is keyed with StateKey, and valued with StateData.
 	storage sync.Map
 	// if recordPluginMetrics is true, metrics.PluginExecutionDuration will be recorded for this cycle.
@@ -125,6 +129,8 @@ func (c *CycleState) Clone() *CycleState {
 	})
 	// The below are not mutated, so we don't have to safe copy.
 	copy.recordPluginMetrics = c.recordPluginMetrics
+	copy.IsSchedulingRetry = c.IsSchedulingRetry
+	copy.IsPreemptionDryRun = c.IsPreemptionDryRun
 	copy.SkipFilterPlugins = c.SkipFilterPlugins
 	copy.SkipScorePlugins = c.SkipScorePlugins
 

@@ -150,56 +150,17 @@ func (sched *Scheduler) schedulingCycle(
 ) (ScheduleResult, *framework.QueuedPodInfo, *framework.Status) {
 	logger := klog.FromContext(ctx)
 	pod := podInfo.Pod
-	scheduleResult, err := sched.SchedulePod(ctx, fwk, state, pod)
-	if err != nil {
-		defer func() {
-			metrics.SchedulingAlgorithmLatency.Observe(metrics.SinceInSeconds(start))
-		}()
-		if err == ErrNoNodesAvailable {
-			status := framework.NewStatus(framework.UnschedulableAndUnresolvable).WithError(err)
-			return ScheduleResult{nominatingInfo: clearNominatedNode}, podInfo, status
-		}
-
-		fitError, ok := err.(*framework.FitError)
-		if !ok {
-			logger.Error(err, "Error selecting node for pod", "pod", klog.KObj(pod))
-			return ScheduleResult{nominatingInfo: clearNominatedNode}, podInfo, framework.AsStatus(err)
-		}
-
-		// SchedulePod() may have failed because the pod would not fit on any host, so we try to
-		// preempt, with the expectation that the next time the pod is tried for scheduling it
-		// will fit due to the preemption. It is also possible that a different pod will schedule
-		// into the resources that were preempted, but this is harmless.
-
-		if !fwk.HasPostFilterPlugins() {
-			logger.V(3).Info("No PostFilter plugins are registered, so no preemption will be performed")
-			return ScheduleResult{}, podInfo, framework.NewStatus(framework.Unschedulable).WithError(err)
-		}
-
-		// Run PostFilter plugins to attempt to make the pod schedulable in a future scheduling cycle.
-		result, status := fwk.RunPostFilterPlugins(ctx, state, pod, fitError.Diagnosis.NodeToStatus)
-		msg := status.Message()
-		fitError.Diagnosis.PostFilterMsg = msg
-		if status.Code() == framework.Error {
-			logger.Error(nil, "Status after running PostFilter plugins for pod", "pod", klog.KObj(pod), "status", msg)
-		} else {
-			logger.V(5).Info("Status after running PostFilter plugins for pod", "pod", klog.KObj(pod), "status", msg)
-		}
-
-		var nominatingInfo *framework.NominatingInfo
-		if result != nil {
-			nominatingInfo = result.NominatingInfo
-		}
-		return ScheduleResult{nominatingInfo: nominatingInfo}, podInfo, framework.NewStatus(framework.Unschedulable).WithError(err)
-	}
-
+	scheduleResult, status := sched.schedulePodWithPostFilter(ctx, fwk, state, pod)
 	metrics.SchedulingAlgorithmLatency.Observe(metrics.SinceInSeconds(start))
+	if !status.IsSuccess() {
+		return scheduleResult, podInfo, status
+	}
 	// Tell the cache to assume that a pod now is running on a given node, even though it hasn't been bound yet.
 	// This allows us to keep scheduling without waiting on binding to occur.
 	assumedPodInfo := podInfo.DeepCopy()
 	assumedPod := assumedPodInfo.Pod
 	// assume modifies `assumedPod` by setting NodeName=scheduleResult.SuggestedHost
-	err = sched.assume(logger, assumedPod, scheduleResult.SuggestedHost)
+	err := sched.assume(logger, assumedPod, scheduleResult.SuggestedHost)
 	if err != nil {
 		// This is most probably result of a BUG in retrying logic.
 		// We report an error here so that pod scheduling can be retried.
@@ -398,16 +359,93 @@ func (sched *Scheduler) skipPodSchedule(ctx context.Context, fwk framework.Frame
 	return isAssumed
 }
 
+// schedulePodWithPostFilter performs at most one immediate fallback retry.
+func (sched *Scheduler) schedulePodWithPostFilter(ctx context.Context, fwk framework.Framework, state *framework.CycleState, pod *v1.Pod) (ScheduleResult, *framework.Status) {
+	logger := klog.FromContext(ctx)
+	scheduleResult, err := sched.SchedulePod(ctx, fwk, state, pod)
+	for retries := 0; err != nil; retries++ {
+		if err == ErrNoNodesAvailable {
+			status := framework.NewStatus(framework.UnschedulableAndUnresolvable).WithError(err)
+			return ScheduleResult{nominatingInfo: clearNominatedNode}, status
+		}
+
+		fitError, ok := err.(*framework.FitError)
+		if !ok {
+			logger.Error(err, "Error selecting node for pod", "pod", klog.KObj(pod))
+			return ScheduleResult{nominatingInfo: clearNominatedNode}, framework.AsStatus(err)
+		}
+
+		// SchedulePod() may have failed because the pod would not fit on any host, so we try to
+		// preempt, with the expectation that the next time the pod is tried for scheduling it
+		// will fit due to the preemption. It is also possible that a different pod will schedule
+		// into the resources that were preempted, but this is harmless.
+
+		if !fwk.HasPostFilterPlugins() {
+			logger.V(3).Info("No PostFilter plugins are registered, so no preemption will be performed")
+			return ScheduleResult{}, framework.NewStatus(framework.Unschedulable).WithError(err)
+		}
+
+		// Run PostFilter plugins to attempt to make the pod schedulable in a future scheduling cycle.
+		result, status := fwk.RunPostFilterPlugins(ctx, state, pod, fitError.Diagnosis.NodeToStatus)
+		if result != nil && result.RetryScheduling {
+			if !status.IsSuccess() || result.NominatingInfo != nil || retries != 0 {
+				return ScheduleResult{}, framework.NewStatus(framework.Error, "invalid or repeated scheduling retry")
+			}
+			if err := ctx.Err(); err != nil {
+				return ScheduleResult{}, framework.AsStatus(err)
+			}
+			state.IsSchedulingRetry = true
+			scheduleResult, err = sched.SchedulePod(ctx, fwk, state, pod)
+			continue
+		}
+		msg := status.Message()
+		fitError.Diagnosis.PostFilterMsg = msg
+		if status.Code() == framework.Error {
+			logger.Error(nil, "Status after running PostFilter plugins for pod", "pod", klog.KObj(pod), "status", msg)
+		} else {
+			logger.V(5).Info("Status after running PostFilter plugins for pod", "pod", klog.KObj(pod), "status", msg)
+		}
+
+		var nominatingInfo *framework.NominatingInfo
+		if result != nil {
+			nominatingInfo = result.NominatingInfo
+		}
+		return ScheduleResult{nominatingInfo: nominatingInfo}, framework.NewStatus(framework.Unschedulable).WithError(err)
+	}
+
+	return scheduleResult, nil
+}
+
 // schedulePod tries to schedule the given pod to one of the nodes in the node list.
 // If it succeeds, it will return the name of the node.
 // If it fails, it will return a FitError with reasons.
 func (sched *Scheduler) schedulePod(ctx context.Context, fwk framework.Framework, state *framework.CycleState, pod *v1.Pod) (result ScheduleResult, err error) {
 	trace := utiltrace.New("Scheduling", utiltrace.Field{Key: "namespace", Value: pod.Namespace}, utiltrace.Field{Key: "name", Value: pod.Name})
 	defer trace.LogIfLong(100 * time.Millisecond)
-	if err := sched.Cache.UpdateSnapshot(klog.FromContext(ctx), sched.nodeInfoSnapshot); err != nil {
-		return result, err
+	if !state.IsSchedulingRetry {
+		if err := sched.Cache.UpdateSnapshot(klog.FromContext(ctx), sched.nodeInfoSnapshot); err != nil {
+			return result, err
+		}
 	}
 	trace.Step("Snapshotting scheduler cache and node infos done")
+	defer func() {
+		preference := framework.NodeResourcePreferenceFromState(state)
+		if err != nil || preference == nil || result.SuggestedHost == "" || !schedulingDecisionLogsEnabled(fwk) {
+			return
+		}
+		node, lookupErr := sched.nodeInfoSnapshot.Get(result.SuggestedHost)
+		if lookupErr != nil {
+			return
+		}
+		phase := "preferred"
+		if preference.AllowFallback {
+			phase = "fallback"
+		}
+		klog.FromContext(ctx).Info("Selected resource-preferred placement for pod", "profile", fwk.ProfileName(), "pod", klog.KObj(pod), "decisionID", pod.UID,
+			"attempt", framework.SchedulingDecisionAttemptFromState(state), "placement_phase", phase,
+			"node", result.SuggestedHost, "deferred_resource", preference.Resource,
+			"uses_deferred_resource", framework.NodeHasResource(node.Node(), preference.Resource), "pdb_violations", 0)
+	}()
 
 	if sched.nodeInfoSnapshot.NumNodes() == 0 {
 		return result, ErrNoNodesAvailable
@@ -424,6 +462,26 @@ func (sched *Scheduler) schedulePod(ctx context.Context, fwk framework.Framework
 			Pod:         pod,
 			NumAllNodes: sched.nodeInfoSnapshot.NumNodes(),
 			Diagnosis:   diagnosis,
+		}
+	}
+
+	if preference := framework.NodeResourcePreferenceFromState(state); preference != nil {
+		preferred := make([]*framework.NodeInfo, 0, len(feasibleNodes))
+		for _, node := range feasibleNodes {
+			if !framework.NodeHasResource(node.Node(), preference.Resource) {
+				preferred = append(preferred, node)
+			}
+		}
+		if len(preferred) > 0 {
+			feasibleNodes = preferred
+		} else {
+			// Finish an existing RDMA nomination only after checking ordinary nodes.
+			for _, node := range feasibleNodes {
+				if node.Node().Name == pod.Status.NominatedNodeName {
+					feasibleNodes = []*framework.NodeInfo{node}
+					break
+				}
+			}
 		}
 	}
 
@@ -468,6 +526,7 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, fwk framework.F
 	}
 	// Run "prefilter" plugins.
 	preRes, s, unscheduledPlugins := fwk.RunPreFilterPlugins(ctx, state, pod)
+	decisionLogCtx = newSchedulingDecisionLogContext(profileName, pod, state)
 	diagnosis.UnschedulablePlugins = unscheduledPlugins
 	if !s.IsSuccess() {
 		if !s.IsRejected() {
@@ -507,9 +566,21 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, fwk framework.F
 		return nil, diagnosis, nil
 	}
 
+	if preference := framework.NodeResourcePreferenceFromState(state); preference != nil {
+		preference.NodeNames = nil
+		if !preRes.AllNodes() {
+			preference.NodeNames = preRes.NodeNames.Clone()
+		}
+	}
+
 	// "NominatedNodeName" can potentially be set in a previous scheduling cycle as a result of preemption.
 	// This node is likely the only candidate that will fit the pod, and hence we try it first before iterating over all nodes.
-	if len(pod.Status.NominatedNodeName) > 0 {
+	tryNomination := len(pod.Status.NominatedNodeName) > 0
+	if preference := framework.NodeResourcePreferenceFromState(state); preference != nil && tryNomination {
+		node, err := sched.nodeInfoSnapshot.Get(pod.Status.NominatedNodeName)
+		tryNomination = err == nil && !framework.NodeHasResource(node.Node(), preference.Resource)
+	}
+	if tryNomination {
 		feasibleNodes, err := sched.evaluateNominatedNode(ctx, pod, fwk, state, diagnosis)
 		if err != nil {
 			logger.Error(err, "Evaluation failed on nominated node", "pod", klog.KObj(pod), "node", pod.Status.NominatedNodeName)
@@ -691,10 +762,11 @@ type schedulingRejectionSummaryKey struct {
 }
 
 type schedulingDecisionLogContext struct {
-	profileName string
-	decisionID  string
-	attempt     int
-	pod         *v1.Pod
+	placementPhase string
+	profileName    string
+	decisionID     string
+	attempt        int
+	pod            *v1.Pod
 }
 
 func schedulingDecisionLogsEnabled(fwk framework.Framework) bool {
@@ -703,21 +775,33 @@ func schedulingDecisionLogsEnabled(fwk framework.Framework) bool {
 
 func newSchedulingDecisionLogContext(profileName string, pod *v1.Pod, state *framework.CycleState) schedulingDecisionLogContext {
 	attempt := framework.SchedulingDecisionAttemptFromState(state)
+	placementPhase := ""
+	if preference := framework.NodeResourcePreferenceFromState(state); preference != nil {
+		placementPhase = "preferred"
+		if preference.AllowFallback {
+			placementPhase = "fallback"
+		}
+	}
 	return schedulingDecisionLogContext{
-		profileName: profileName,
-		decisionID:  string(pod.UID),
-		attempt:     attempt,
-		pod:         pod,
+		placementPhase: placementPhase,
+		profileName:    profileName,
+		decisionID:     string(pod.UID),
+		attempt:        attempt,
+		pod:            pod,
 	}
 }
 
 func (c schedulingDecisionLogContext) keyvals() []interface{} {
-	return []interface{}{
+	values := []interface{}{
 		"profile", c.profileName,
 		"decisionID", c.decisionID,
 		"attempt", c.attempt,
 		"pod", klog.KObj(c.pod),
 	}
+	if c.placementPhase != "" {
+		values = append(values, "placement_phase", c.placementPhase)
+	}
+	return values
 }
 
 func appendSchedulingRejection(rejections []schedulingRejectionLog, phase, nodeName string, status *framework.Status, synthetic bool) []schedulingRejectionLog {
@@ -828,6 +912,10 @@ func (sched *Scheduler) findNodesThatPassFilters(
 	numNodesToFind := sched.numFeasibleNodesToFind(fwk.PercentageOfNodesToScore(), int32(numAllNodes))
 	if !sched.hasExtenderFilters() && !sched.hasScoring(fwk) {
 		numNodesToFind = 1
+	}
+
+	if framework.NodeResourcePreferenceFromState(state) != nil {
+		numNodesToFind = int32(numAllNodes)
 	}
 
 	// Create feasible list with enough space to avoid growing it

@@ -39,6 +39,7 @@ profiles:
           - name: NamespaceResourceGuarantee
       filter:
         enabled:
+          - name: NamespaceResourceGuarantee  # required when RDMA preference is enabled
           - name: NominatedNodeReservation
       postFilter:
         disabled:
@@ -63,6 +64,7 @@ profiles:
             - team-a
             - team-b
           restrictGuaranteedPreemptionToManagedNamespaces: true
+          preferNonRDMANodesForGuaranteedGPU: false  # opt in after validating GPU/RDMA placement
           namespaceGuarantees:
             team-a:
               cpu: "64"
@@ -140,6 +142,7 @@ Type: `pkg/scheduler/apis/config/types_pluginargs.go` (internal), `staging/src/k
 | admissionAssignedTierNamespaces | []string, required when semi tier is set | Namespaces permitted to receive semi-guaranteed classification; each must occur in namespaceGuarantees |
 | `namespaceGuarantees` | `map[namespace]ResourceList`, required | Per-namespace shared protected guarantee. A configured namespace is capped only for resources it lists; an omitted resource is uncapped. A namespace absent from the map has guarantee **0** for resources configured anywhere, so protected pods from unlisted namespaces requesting those resources cannot schedule |
 | restrictGuaranteedPreemptionToManagedNamespaces | bool, optional | When true, explicit guaranteed Pods may preempt only lower-priority Pods from a managed namespace (a key in namespaceGuarantees). Defaults to false and does not affect semi-guaranteed Pods. |
+| `preferNonRDMANodesForGuaranteedGPU` | bool, optional, default `false` | For explicit guaranteed GPU Pods without an RDMA request, exhaust ordinary placements without PDB violations before using RDMA nodes. Requires the plugin in PreFilter, Filter and PostFilter, with DefaultPreemption disabled. |
 
 Validation rules (config is rejected at scheduler startup otherwise):
 
@@ -149,6 +152,56 @@ Validation rules (config is rejected at scheduler startup otherwise):
 - Resources must be `cpu`, `memory`, or extended scalar resources (e.g. `nvidia.com/gpu`).
 - Quantities must be `>= 0`; extended resources must be integers (`"2"` ok, `"1500m"` rejected).
 - cpu is accounted in millicores internally, so fractional cpu guarantees (`"500m"`) work.
+
+### 3.1 RDMA fallback for guaranteed GPU Pods
+
+Set `preferNonRDMANodesForGuaranteedGPU: true` in the Better-Scheduler profile's
+`NamespaceResourceGuarantee` arguments. Enable its `filter` extension as in the
+example above. Startup validates the final extension list, including MultiPoint
+expansion. Leave the flag false or omitted in a PreFilter-only backstop profile.
+
+The policy applies to the configured explicit guaranteed PriorityClass when the
+Pod requests `nvidia.com/gpu > 0` and `nvidia.com/rdma_shared_device_a = 0`. Effective
+requests include init containers and restartable init containers. The GPU resource
+does not have to appear in `namespaceGuarantees` for this preference to apply.
+Semi-guaranteed, ordinary, CPU-only, GPU+RDMA and MIG-only Pods retain their existing
+placement behavior.
+
+A node is an RDMA node if either its Capacity or Allocatable advertises a positive
+`nvidia.com/rdma_shared_device_a` quantity. Allocations by other Pods do not change
+its classification; positive Capacity keeps it classified as RDMA when device
+health temporarily reduces Allocatable to zero.
+
+| Order | Placement |
+|---|---|
+| 1 | Ordinary node, without preemption |
+| 2 | Ordinary node, preemption with no PDB-violating victims |
+| 3 | RDMA node, without preemption |
+| 4 | RDMA node, preemption with no PDB-violating victims |
+| 5 | Remaining preemption candidates: fewest PDB-violating victims, then ordinary nodes, then existing GPU packing and victim tie-breakers |
+
+An ordinary preemption with no PDB violations takes precedence over a free RDMA
+node. PDB safety takes precedence over avoiding RDMA. `preemptionPolicy: Never`
+skips preemption steps but still permits direct RDMA placement as a fallback.
+Namespace caps, numeric priority and the managed-namespace victim restriction
+remain enforced. Existing running Pods are not relocated.
+
+Once preemption has started, the scheduler waits for the chosen node instead of
+starting a second wave elsewhere. A newly free ordinary node can still be used
+immediately. An invalid nomination restarts the search; binding releases the old
+reservation, including when the Pod binds on a different node.
+
+The scheduler checks all eligible nodes in each considered group. Native filtering
+and preemption candidate limits cannot hide an alternative, and extender results
+are included. Filter-only extenders are checked against candidate node copies with
+the selected victims removed. Non-ignorable evaluation errors abort the attempt;
+they are not interpreted as absence of ordinary capacity.
+
+Fallback is one bounded retry on the same scheduler snapshot and in the same queue
+attempt. Pure candidate evaluation does not delete Pods or alter nominations or
+reservations. Only the chosen preemption is executed. The additional full search
+can increase Filter/PostFilter latency for opted-in Pods; inspect latency and
+`placement_phase` decision logs during staging validation.
 
 ## 4. Pod Opt-In and PriorityClass
 

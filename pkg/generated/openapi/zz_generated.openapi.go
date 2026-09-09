@@ -66524,6 +66524,13 @@ func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref co
 							Format:      "",
 						},
 					},
+					"preferNonRDMANodesForGuaranteedGPU": {
+						SchemaProps: spec.SchemaProps{
+							Description: "PreferNonRDMANodesForGuaranteedGPU reserves RDMA nodes as a fallback for explicit guaranteed GPU pods that do not request RDMA. PDB safety takes precedence over the node preference. Defaults to false.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
 				},
 			},
 		},

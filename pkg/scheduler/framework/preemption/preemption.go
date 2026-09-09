@@ -286,6 +286,19 @@ func (ev *Evaluator) Preempt(ctx context.Context, state *framework.CycleState, p
 		return nil, framework.NewStatus(framework.Unschedulable, "no candidate node for preemption")
 	}
 
+	return ev.ExecuteCandidate(ctx, pod, bestCandidate)
+}
+
+// ExecuteCandidate performs the side effects for a previously evaluated candidate.
+// Evaluation must have completed successfully before calling this method.
+func (ev *Evaluator) ExecuteCandidate(ctx context.Context, pod *v1.Pod, bestCandidate Candidate) (*framework.PostFilterResult, *framework.Status) {
+	if err := ctx.Err(); err != nil {
+		return nil, framework.AsStatus(err)
+	}
+	if bestCandidate == nil || bestCandidate.Name() == "" {
+		return nil, framework.NewStatus(framework.Error, "missing preemption candidate")
+	}
+	logger := klog.FromContext(ctx)
 	logger.V(2).Info("the target node for the preemption is determined", "node", bestCandidate.Name(), "pod", klog.KObj(pod))
 
 	// 5) Perform preparation work before nominating the selected candidate.
@@ -329,6 +342,76 @@ func (ev *Evaluator) findCandidates(ctx context.Context, state *framework.CycleS
 
 	offset, candidatesNum := ev.GetOffsetAndNumCandidates(int32(len(potentialNodes)))
 	return ev.DryRunPreemption(ctx, state, pod, potentialNodes, pdbs, offset, candidatesNum)
+}
+
+// EvaluateCandidates exhaustively evaluates an explicit node group and applies
+// preemption extenders. It never clears nominations or prepares a candidate.
+func (ev *Evaluator) EvaluateCandidates(ctx context.Context, state *framework.CycleState, pod *v1.Pod, nodes []*framework.NodeInfo) ([]Candidate, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(nodes) == 0 {
+		return nil, nil
+	}
+	pdbs, err := getPodDisruptionBudgets(ev.PdbLister)
+	if err != nil {
+		return nil, err
+	}
+	candidates, _, err := ev.DryRunPreemption(ctx, state, pod, nodes, pdbs, 0, int32(len(nodes)))
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	candidates, status := ev.callExtenders(klog.FromContext(ctx), pod, candidates)
+	if !status.IsSuccess() {
+		return nil, status.AsError()
+	}
+	// A filter-only extender cannot amend victims, but it can still reject
+	// placement (for example because of a device or topology constraint).
+	// Check it on copies with the selected victims removed before committing.
+	for _, extender := range ev.Handler.Extenders() {
+		if !extender.IsFilter() || extender.SupportsPreemption() || !extender.IsInterested(pod) || len(candidates) == 0 {
+			continue
+		}
+		simulated := make([]*framework.NodeInfo, 0, len(candidates))
+		for _, candidate := range candidates {
+			node, err := ev.Handler.SnapshotSharedLister().NodeInfos().Get(candidate.Name())
+			if err != nil {
+				return nil, err
+			}
+			node = node.Snapshot()
+			for _, victim := range candidate.Victims().Pods {
+				if err := node.RemovePod(klog.FromContext(ctx), victim); err != nil {
+					return nil, err
+				}
+			}
+			simulated = append(simulated, node)
+		}
+		filtered, _, _, err := extender.Filter(pod, simulated)
+		if err != nil {
+			if extender.IsIgnorable() {
+				continue
+			}
+			return nil, err
+		}
+		allowed := sets.New[string]()
+		for _, node := range filtered {
+			allowed.Insert(node.Node().Name)
+		}
+		accepted := make([]Candidate, 0, len(filtered))
+		for _, candidate := range candidates {
+			if allowed.Has(candidate.Name()) {
+				accepted = append(accepted, candidate)
+			}
+		}
+		candidates = accepted
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return candidates, nil
 }
 
 // callExtenders calls given <extenders> to select the list of feasible candidates.
@@ -698,6 +781,7 @@ func (ev *Evaluator) DryRunPreemption(ctx context.Context, state *framework.Cycl
 		logger.V(5).Info("Check the potential node for preemption", "node", nodeInfoCopy.Node().Name)
 
 		stateCopy := state.Clone()
+		stateCopy.IsPreemptionDryRun = true
 		pods, numPDBViolations, status := ev.SelectVictimsOnNode(ctx, stateCopy, pod, nodeInfoCopy, pdbs)
 		if status.IsSuccess() && len(pods) != 0 {
 			victims := extenderv1.Victims{
