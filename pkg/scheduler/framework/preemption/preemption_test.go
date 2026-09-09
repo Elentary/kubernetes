@@ -293,6 +293,7 @@ func TestDryRunPreemption(t *testing.T) {
 }
 
 func TestSelectCandidate(t *testing.T) {
+	metrics.Register()
 	tests := []struct {
 		name      string
 		nodeNames []string

@@ -288,6 +288,12 @@ type EnqueueExtensions interface {
 	EventsToRegister(context.Context) ([]fwk.ClusterEventWithHint, error)
 }
 
+// PluginConfigurationValidator optionally checks the final, expanded plugin
+// configuration after all extension points (including MultiPoint) are resolved.
+type PluginConfigurationValidator interface {
+	ValidatePluginConfiguration(*config.Plugins) error
+}
+
 // PreFilterExtensions is an interface that is included in plugins that allow specifying
 // callbacks to make incremental updates to its supposedly pre-calculated
 // state.
@@ -741,6 +747,10 @@ type NominatingInfo struct {
 // PostFilterResult wraps needed info for scheduler framework to act upon PostFilter phase.
 type PostFilterResult struct {
 	*NominatingInfo
+	// RetryScheduling requests one immediate retry on the same scheduler snapshot.
+	// It is valid only with Success and without NominatingInfo. The plugin must
+	// first update its CycleState to permit the fallback placement.
+	RetryScheduling bool
 }
 
 func NewPostFilterResultWithNominatedNode(name string) *PostFilterResult {

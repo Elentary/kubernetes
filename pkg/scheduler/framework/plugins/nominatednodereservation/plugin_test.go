@@ -18,6 +18,7 @@ package nominatednodereservation
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -283,4 +284,40 @@ func newTestPodLister(pods ...*v1.Pod) corelisters.PodLister {
 		}
 	}
 	return corelisters.NewPodLister(indexer)
+}
+
+func TestDryRunDoesNotCleanStaleReservation(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missing=%v", missing), func(t *testing.T) {
+			ResetSharedStoreForTest()
+			t.Cleanup(ResetSharedStoreForTest)
+			holder := st.MakePod().Namespace("team-a").Name("holder").UID("holder-uid").Obj()
+			reservation, _ := SharedStore().Reserve("node-a", holder, "test")
+			deleting := holder.DeepCopy()
+			now := metav1.Now()
+			deleting.DeletionTimestamp = &now
+			pl := &NominatedNodeReservation{store: SharedStore(), podLister: newTestPodLister(deleting)}
+			if missing {
+				pl.podLister = newTestPodLister()
+			}
+			node := framework.NewNodeInfo()
+			node.SetNode(st.MakeNode().Name("node-a").Obj())
+			other := st.MakePod().Namespace("team-b").Name("other").UID("other-uid").Obj()
+			_, ctx := ktesting.NewTestContext(t)
+			probe := framework.NewCycleState()
+			probe.IsPreemptionDryRun = true
+			if status := pl.Filter(ctx, probe, other, node); !status.IsSuccess() {
+				t.Fatal(status)
+			}
+			if got, ok := SharedStore().Get("node-a"); !ok || got != reservation {
+				t.Fatal("dry run mutated reservation")
+			}
+			if status := pl.Filter(ctx, framework.NewCycleState(), other, node); !status.IsSuccess() {
+				t.Fatal(status)
+			}
+			if _, ok := SharedStore().Get("node-a"); ok {
+				t.Fatal("real filter did not clean stale reservation")
+			}
+		})
+	}
 }

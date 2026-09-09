@@ -378,6 +378,14 @@ func NewFramework(ctx context.Context, r Registry, profile *config.KubeScheduler
 		}
 	}
 
+	for _, plugin := range f.pluginsMap {
+		if validator, ok := plugin.(framework.PluginConfigurationValidator); ok {
+			if err := validator.ValidatePluginConfiguration(f.ListPlugins()); err != nil {
+				return nil, fmt.Errorf("validating plugin %q: %w", plugin.Name(), err)
+			}
+		}
+	}
+
 	if len(f.queueSortPlugins) != 1 {
 		return nil, fmt.Errorf("only one queue sort plugin required for profile with scheduler name %q, but got %d", profile.SchedulerName, len(f.queueSortPlugins))
 	}
