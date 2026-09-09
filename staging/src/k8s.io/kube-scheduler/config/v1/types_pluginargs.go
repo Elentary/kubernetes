@@ -222,12 +222,14 @@ type NamespaceResourceGuaranteeArgs struct {
 	// +mapType=granular
 	NamespaceGuarantees map[string]corev1.ResourceList `json:"namespaceGuarantees,omitempty"`
 
-	// RestrictGuaranteedPreemptionToManagedNamespaces limits explicit guaranteed
-	// Pods to preempting Pods from namespaces configured in NamespaceGuarantees.
-	// When omitted, guaranteed Pods retain the existing cross-namespace
-	// preemption behavior.
+	// RestrictPreemptionToManagedNamespaces lists the incoming Pod PriorityClasses
+	// that may preempt only Pods from namespaces configured in NamespaceGuarantees.
+	// Entries must be unique, non-empty, and match ProtectedPriorityClassName or
+	// the configured SemiProtectedPriorityClassName. An empty or omitted list
+	// disables this restriction.
 	// +optional
-	RestrictGuaranteedPreemptionToManagedNamespaces bool `json:"restrictGuaranteedPreemptionToManagedNamespaces,omitempty"`
+	// +listType=set
+	RestrictPreemptionToManagedNamespaces []string `json:"restrictPreemptionToManagedNamespaces,omitempty"`
 
 	// PreferNonRDMANodesForGuaranteedGPU reserves RDMA nodes as a fallback for
 	// explicit guaranteed GPU pods that do not request RDMA. PDB safety takes

@@ -62609,11 +62609,24 @@ func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref co
 							},
 						},
 					},
-					"restrictGuaranteedPreemptionToManagedNamespaces": {
+					"restrictPreemptionToManagedNamespaces": {
+						VendorExtensible: spec.VendorExtensible{
+							Extensions: spec.Extensions{
+								"x-kubernetes-list-type": "set",
+							},
+						},
 						SchemaProps: spec.SchemaProps{
-							Description: "RestrictGuaranteedPreemptionToManagedNamespaces limits explicit guaranteed Pods to preempting Pods from namespaces configured in NamespaceGuarantees. When omitted, guaranteed Pods retain the existing cross-namespace preemption behavior.",
-							Type:        []string{"boolean"},
-							Format:      "",
+							Description: "RestrictPreemptionToManagedNamespaces lists the incoming Pod PriorityClasses that may preempt only Pods from namespaces configured in NamespaceGuarantees. Entries must be unique, non-empty, and match ProtectedPriorityClassName or the configured SemiProtectedPriorityClassName. An empty or omitted list disables this restriction.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: "",
+										Type:    []string{"string"},
+										Format:  "",
+									},
+								},
+							},
 						},
 					},
 					"preferNonRDMANodesForGuaranteedGPU": {

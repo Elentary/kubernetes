@@ -367,7 +367,7 @@ E2 — Native preemption:
 - `preemptionPolicy: Never` disables it for the incoming Pod.
 - Ongoing asynchronous preemption or previously nominated terminating victims can require waiting.
 - A victim must have **strictly lower numeric priority**.
-- When `restrictGuaranteedPreemptionToManagedNamespaces` applies, a guaranteed preemptor can select only victims in scheduler-managed namespaces.
+- When the incoming Pod's PriorityClass name is listed in `restrictPreemptionToManagedNamespaces`, it can select only victims in namespaces configured in `namespaceGuarantees`. The list can select the configured guaranteed and semi-guaranteed classes; an empty or omitted list disables this restriction.
 - Node filters must pass after candidate victim removal. Affinity, topology, taints and resource constraints still matter.
 
 Equal-priority semi-guaranteed Pods cannot natively preempt one another.

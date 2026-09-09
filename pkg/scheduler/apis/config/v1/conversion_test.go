@@ -19,6 +19,7 @@ package v1
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	configv1 "k8s.io/kube-scheduler/config/v1"
@@ -26,28 +27,43 @@ import (
 )
 
 func TestNamespaceResourceGuaranteeArgsConversionPreservesManagedVictimRestriction(t *testing.T) {
-	external := &configv1.NamespaceResourceGuaranteeArgs{
-		ProtectedPriorityClassName:                      "guaranteed",
-		RestrictGuaranteedPreemptionToManagedNamespaces: true,
-		NamespaceGuarantees: map[string]corev1.ResourceList{
-			"team-a": {corev1.ResourceCPU: resource.MustParse("1")},
-		},
-	}
-	internal := &config.NamespaceResourceGuaranteeArgs{}
 	scheme := GetPluginArgConversionScheme()
-	if err := scheme.Convert(external, internal, nil); err != nil {
-		t.Fatalf("converting NamespaceResourceGuaranteeArgs to internal: %v", err)
-	}
-	if !internal.RestrictGuaranteedPreemptionToManagedNamespaces {
-		t.Fatal("expected internal args to retain managed-namespace victim restriction")
-	}
+	for _, tt := range []struct {
+		name    string
+		classes []string
+	}{
+		{name: "omitted"},
+		{name: "empty", classes: []string{}},
+		{name: "guaranteed", classes: []string{"protected"}},
+		{name: "semi-guaranteed", classes: []string{"semi"}},
+		{name: "both", classes: []string{"protected", "semi"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			external := &configv1.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName:            "protected",
+				SemiProtectedPriorityClassName:        "semi",
+				AdmissionAssignedTierNamespaces:       []string{"team-a"},
+				RestrictPreemptionToManagedNamespaces: tt.classes,
+				NamespaceGuarantees: map[string]corev1.ResourceList{
+					"team-a": {corev1.ResourceCPU: resource.MustParse("1")},
+				},
+			}
+			internal := &config.NamespaceResourceGuaranteeArgs{}
+			if err := scheme.Convert(external, internal, nil); err != nil {
+				t.Fatalf("converting NamespaceResourceGuaranteeArgs to internal: %v", err)
+			}
+			if diff := cmp.Diff(tt.classes, internal.RestrictPreemptionToManagedNamespaces); diff != "" {
+				t.Fatalf("internal restriction (-want,+got):\n%s", diff)
+			}
 
-	roundTripped := &configv1.NamespaceResourceGuaranteeArgs{}
-	if err := scheme.Convert(internal, roundTripped, nil); err != nil {
-		t.Fatalf("converting NamespaceResourceGuaranteeArgs to v1: %v", err)
-	}
-	if !roundTripped.RestrictGuaranteedPreemptionToManagedNamespaces {
-		t.Fatal("expected round-tripped args to retain managed-namespace victim restriction")
+			roundTripped := &configv1.NamespaceResourceGuaranteeArgs{}
+			if err := scheme.Convert(internal, roundTripped, nil); err != nil {
+				t.Fatalf("converting NamespaceResourceGuaranteeArgs to v1: %v", err)
+			}
+			if diff := cmp.Diff(external, roundTripped); diff != "" {
+				t.Fatalf("round-tripped args (-want,+got):\n%s", diff)
+			}
+		})
 	}
 }
 
