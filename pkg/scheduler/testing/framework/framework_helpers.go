@@ -128,6 +128,8 @@ func getPluginSetByExtension(plugins *schedulerapi.Plugins, extension string) *s
 		return &plugins.Filter
 	case "PreFilter":
 		return &plugins.PreFilter
+	case "PostFilter":
+		return &plugins.PostFilter
 	case "PreScore":
 		return &plugins.PreScore
 	case "Score":

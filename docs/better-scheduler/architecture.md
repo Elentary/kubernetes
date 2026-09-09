@@ -143,6 +143,44 @@ score = min(protectedGPUUsageOnNode + incomingGPURequest, allocatableGPU) * 100 
 
 Rationale: guaranteed pods cannot be evicted, so fragmentation caused by spreading is permanent — e.g. eight 1-GPU guaranteed pods spread across eight 8-GPU nodes make a future 8-GPU guaranteed pod unschedulable even though 56 GPUs are free. Packing is *preventive*: it avoids creating new fragmentation but cannot repair existing fragmentation.
 
+### 5.6.1 Optional RDMA fallback
+
+`preferNonRDMANodesForGuaranteedGPU` adds a Filter/PostFilter placement policy for
+explicit guaranteed GPU Pods without an RDMA request. This is an ordered search:
+
+```mermaid
+flowchart TD
+    Q[Namespace guarantee check] --> F[Find a free ordinary node]
+    F -->|Found| B[Bind]
+    F -->|None| P[Evaluate ordinary preemption]
+    P -->|No PDB violations| E[Execute chosen preemption and reserve node]
+    P -->|No safe candidate| R[Retry on the same snapshot with RDMA allowed]
+    R --> D[Find a free RDMA node]
+    D -->|Found| B
+    D -->|None| A[Evaluate RDMA preemption and merge ordinary candidates]
+    A --> O[Minimize PDB violations, prefer ordinary nodes on ties, then pack GPUs]
+    O -->|Candidate| E
+    O -->|No candidate| W[Pending]
+```
+
+Quota rejection stops before this flow. A valid in-flight nomination is allowed to
+finish without a second preemption wave; a free ordinary node can still be used.
+`PreemptNever` skips eviction steps. See the full contract in
+[configuration.md](configuration.md#31-rdma-fallback-for-guaranteed-gpu-pods).
+
+`NamespaceResourceGuarantee` stores the phase and evaluated ordinary candidates in
+CycleState. PostFilter can return `RetryScheduling` without a nomination, and the
+scheduler permits at most one immediate retry. Both passes share a snapshot; only
+the final outcome reaches assume/bind or the scheduling failure handler. RDMA
+nominations cannot bypass the ordinary-node search through the nominated-node
+fast path. Filtering is exhaustive for affected Pods, including before extenders.
+
+The preemption evaluator exposes separate `EvaluateCandidates` and
+`ExecuteCandidate` operations. Evaluation uses cloned node and cycle state,
+examines all nodes in the supplied group, and applies extenders. Reservation
+cleanup is suppressed in speculative filters. The existing `Preempt` entry point
+retains its behavior for other Pods and DefaultPreemption.
+
 ### 5.7 Metrics
 
 `metrics.go` exports ALPHA config gauges and bounded policy counters. The gauges let dashboards see the effective config without reading the ConfigMap:

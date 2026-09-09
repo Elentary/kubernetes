@@ -191,8 +191,8 @@ func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framew
 	return plugin, nil
 }
 
-// PreFilter checks whether a protected pod would exceed its namespace's shared protected resource guarantee.
-func (pl *NamespaceResourceGuarantee) PreFilter(_ context.Context, _ *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
+// preFilterQuota checks whether a protected pod would exceed its namespace's shared protected resource guarantee.
+func (pl *NamespaceResourceGuarantee) preFilterQuota(_ context.Context, _ *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
 	tier := pl.podTier(pod)
 	if tier == "" || len(pl.configuredResource) == 0 {
 		return nil, nil
@@ -270,17 +270,33 @@ func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state *fra
 		pl.recordPreemptionOutcome(pod, tier, preemptionOutcomeError)
 		return nil, framework.NewStatus(framework.Error, "namespace resource guarantee preemption evaluator is not initialized")
 	}
-	defer schedmetrics.PreemptionAttempts.Inc()
 
 	trace, err := pl.newPreemptionTrace(pod)
 	if err != nil {
 		pl.recordPreemptionOutcome(pod, tier, preemptionOutcomeError)
 		return nil, framework.AsStatus(err)
 	}
+	if cycle := rdmaStateFromCycle(state); cycle != nil {
+		if cycle.trace != nil {
+			trace = cycle.trace
+		} else {
+			cycle.trace = trace
+		}
+	}
 	pl.preemptionTrace.Store(pod.UID, trace)
 	defer pl.preemptionTrace.Delete(pod.UID)
 
-	result, status := pl.evaluator.Preempt(ctx, state, pod, m)
+	var result *framework.PostFilterResult
+	var status *framework.Status
+	if framework.NodeResourcePreferenceFromState(state) != nil {
+		result, status = pl.postFilterRDMA(ctx, state, pod, m)
+	} else {
+		result, status = pl.evaluator.Preempt(ctx, state, pod, m)
+	}
+	if result != nil && result.RetryScheduling {
+		return result, status
+	}
+	schedmetrics.PreemptionAttempts.Inc()
 	pl.logPreemptionDecision(ctx, state, pod, result, status)
 	pl.syncNominatedNodeReservation(ctx, pod, result, status)
 
@@ -430,7 +446,22 @@ func (pl *NamespaceResourceGuarantee) PodEligibleToPreemptOthers(_ context.Conte
 	return true, ""
 }
 
-func (pl *NamespaceResourceGuarantee) OrderedScoreFuncs(_ context.Context, pod *v1.Pod, nodesToVictims map[string]*extenderv1.Victims) []func(node string) int64 {
+func (pl *NamespaceResourceGuarantee) OrderedScoreFuncs(ctx context.Context, pod *v1.Pod, nodesToVictims map[string]*extenderv1.Victims) []func(node string) int64 {
+	scores := pl.packingScoreFuncs(ctx, pod, nodesToVictims)
+	if !pl.prefersNonRDMA(pod) {
+		return scores
+	}
+	preferOrdinary := func(name string) int64 {
+		node, err := pl.handle.SnapshotSharedLister().NodeInfos().Get(name)
+		if err == nil && !framework.NodeHasResource(node.Node(), rdmaResource) {
+			return 1
+		}
+		return 0
+	}
+	return append([]func(string) int64{preferOrdinary}, scores...)
+}
+
+func (pl *NamespaceResourceGuarantee) packingScoreFuncs(_ context.Context, pod *v1.Pod, nodesToVictims map[string]*extenderv1.Victims) []func(node string) int64 {
 	if pl.scoredProtectedGPURequest(pod) == 0 {
 		return nil
 	}
@@ -531,6 +562,9 @@ func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 			return false, err
 		}
 		status := pl.handle.RunFilterPluginsWithNominatedPods(ctx, state, pod, nodeInfo)
+		if status.Code() == framework.Error {
+			return false, status.AsError()
+		}
 		fits := status.IsSuccess()
 		if !fits {
 			if err := removePod(pi); err != nil {
