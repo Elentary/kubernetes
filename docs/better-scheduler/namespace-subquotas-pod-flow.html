@@ -338,7 +338,7 @@ does not automatically exempt a Pod from scheduler policy.</p>
 <li><code>preemptionPolicy: Never</code> disables it for the incoming Pod.</li>
 <li>Ongoing asynchronous preemption or previously nominated terminating victims can require waiting.</li>
 <li>A victim must have <strong>strictly lower numeric priority</strong>.</li>
-<li>When <code>restrictGuaranteedPreemptionToManagedNamespaces</code> applies, a guaranteed preemptor can select only victims in scheduler-managed namespaces.</li>
+<li>When the incoming Pod's PriorityClass name is listed in <code>restrictPreemptionToManagedNamespaces</code>, it can select only victims in namespaces configured in <code>namespaceGuarantees</code>. The list can select the configured guaranteed and semi-guaranteed classes; an empty or omitted list disables this restriction.</li>
 <li>Node filters must pass after candidate victim removal. Affinity, topology, taints and resource constraints still matter.</li>
 </ul>
 <p>Equal-priority semi-guaranteed Pods cannot natively preempt one another.

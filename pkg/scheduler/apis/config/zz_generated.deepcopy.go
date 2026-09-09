@@ -293,6 +293,11 @@ func (in *NamespaceResourceGuaranteeArgs) DeepCopyInto(out *NamespaceResourceGua
 			(*out)[key] = outVal
 		}
 	}
+	if in.RestrictPreemptionToManagedNamespaces != nil {
+		in, out := &in.RestrictPreemptionToManagedNamespaces, &out.RestrictPreemptionToManagedNamespaces
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	return
 }
 

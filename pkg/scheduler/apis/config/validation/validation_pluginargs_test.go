@@ -345,6 +345,99 @@ func TestValidateNamespaceResourceGuaranteeArgs(t *testing.T) {
 	}
 }
 
+func TestValidateNamespaceResourceGuaranteeArgsRestrictedPreemptionClasses(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		classes   []string
+		semiClass string
+		wantErrs  field.ErrorList
+	}{
+		{name: "omitted"},
+		{name: "empty", classes: []string{}},
+		{name: "guaranteed only in single-tier mode", classes: []string{"protected"}},
+		{name: "guaranteed only in two-tier mode", classes: []string{"protected"}, semiClass: "semi"},
+		{name: "semi-guaranteed only", classes: []string{"semi"}, semiClass: "semi"},
+		{name: "both configured class names", classes: []string{"protected", "semi"}, semiClass: "semi"},
+		{name: "order does not matter", classes: []string{"semi", "protected"}, semiClass: "semi"},
+		{
+			name:    "empty class in single-tier mode",
+			classes: []string{""},
+			wantErrs: field.ErrorList{
+				&field.Error{Type: field.ErrorTypeInvalid, Field: "restrictPreemptionToManagedNamespaces[0]"},
+			},
+		},
+		{
+			name:      "empty class in two-tier mode",
+			classes:   []string{"protected", ""},
+			semiClass: "semi",
+			wantErrs: field.ErrorList{
+				&field.Error{Type: field.ErrorTypeInvalid, Field: "restrictPreemptionToManagedNamespaces[1]"},
+			},
+		},
+		{
+			name:    "duplicate class",
+			classes: []string{"protected", "protected"},
+			wantErrs: field.ErrorList{
+				&field.Error{Type: field.ErrorTypeDuplicate, Field: "restrictPreemptionToManagedNamespaces[1]"},
+			},
+		},
+		{
+			name:      "unknown class",
+			classes:   []string{"ordinary"},
+			semiClass: "semi",
+			wantErrs: field.ErrorList{
+				&field.Error{Type: field.ErrorTypeNotSupported, Field: "restrictPreemptionToManagedNamespaces[0]"},
+			},
+		},
+		{
+			name:    "tier name is not an alias for the configured class",
+			classes: []string{"guaranteed"},
+			wantErrs: field.ErrorList{
+				&field.Error{Type: field.ErrorTypeNotSupported, Field: "restrictPreemptionToManagedNamespaces[0]"},
+			},
+		},
+		{
+			name:    "semi class is not configured",
+			classes: []string{"semi"},
+			wantErrs: field.ErrorList{
+				&field.Error{Type: field.ErrorTypeNotSupported, Field: "restrictPreemptionToManagedNamespaces[0]"},
+			},
+		},
+		{
+			name:    "class matching is case sensitive",
+			classes: []string{"Protected"},
+			wantErrs: field.ErrorList{
+				&field.Error{Type: field.ErrorTypeNotSupported, Field: "restrictPreemptionToManagedNamespaces[0]"},
+			},
+		},
+		{
+			name:    "class matching does not trim whitespace",
+			classes: []string{" protected"},
+			wantErrs: field.ErrorList{
+				&field.Error{Type: field.ErrorTypeNotSupported, Field: "restrictPreemptionToManagedNamespaces[0]"},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			args := config.NamespaceResourceGuaranteeArgs{
+				ProtectedPriorityClassName:            "protected",
+				SemiProtectedPriorityClassName:        tt.semiClass,
+				RestrictPreemptionToManagedNamespaces: tt.classes,
+				NamespaceGuarantees: map[string]v1.ResourceList{
+					"team-a": {v1.ResourceCPU: resource.MustParse("1")},
+				},
+			}
+			if tt.semiClass != "" {
+				args.AdmissionAssignedTierNamespaces = []string{"team-a"}
+			}
+			err := ValidateNamespaceResourceGuaranteeArgs(nil, &args)
+			if diff := cmp.Diff(tt.wantErrs.ToAggregate(), err, ignoreBadValueDetail); diff != "" {
+				t.Errorf("ValidateNamespaceResourceGuaranteeArgs returned err (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestValidatePodTopologySpreadArgs(t *testing.T) {
 	cases := map[string]struct {
 		args     *config.PodTopologySpreadArgs
