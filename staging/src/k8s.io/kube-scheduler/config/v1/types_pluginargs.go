@@ -228,6 +228,12 @@ type NamespaceResourceGuaranteeArgs struct {
 	// preemption behavior.
 	// +optional
 	RestrictGuaranteedPreemptionToManagedNamespaces bool `json:"restrictGuaranteedPreemptionToManagedNamespaces,omitempty"`
+
+	// PreferNonRDMANodesForGuaranteedGPU reserves RDMA nodes as a fallback for
+	// explicit guaranteed GPU pods that do not request RDMA. PDB safety takes
+	// precedence over the node preference. Defaults to false.
+	// +optional
+	PreferNonRDMANodesForGuaranteedGPU bool `json:"preferNonRDMANodesForGuaranteedGPU,omitempty"`
 }
 
 // ScoringStrategyType the type of scoring strategy used in NodeResourcesFit plugin.

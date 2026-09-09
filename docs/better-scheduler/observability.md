@@ -26,6 +26,21 @@ All lines are structured klog (parseable with `logfmt`). `pod` renders as `<name
 | `Preemption candidate scored for pod` | `node`, `score`, `score_plugin`, `score_name`, `victims`, `numPDBViolatingVictims`, GPU packing fields |
 | `Preemption candidate selected for pod` | `node`, `score`, `selection_path`, `victims`, `numPDBViolatingVictims`, GPU packing fields |
 
+**RDMA placement lines** (when the optional preference applies):
+
+| Message | Extra fields |
+|---|---|
+| `Allowing RDMA placement fallback` | `placement_phase=fallback`, `fallback_reason` |
+| `Selected resource-preferred placement for pod` | `placement_phase`, `node`, `deferred_resource`, `uses_deferred_resource`, `pdb_violations=0` |
+| `Selected placement preemption candidate` | `placement_phase`, `node`, `pdb_violations` |
+
+`placement_phase` is `preferred` or `fallback` and also appears on filtering and
+scoring decision logs for affected Pods. Fallback reasons distinguish no ordinary
+candidate, unavoidable ordinary PDB violations, disabled preemption, and completing
+an existing nomination. Both passes share `decisionID` and `attempt`; a fallback
+can produce two filtering summaries for one attempt. It does not emit a preemption
+started event or increment victim deletions unless a preemption is actually chosen.
+
 **Rejection lines** (emitted during node filtering in `schedule_one.go` `findNodesThatFitPod`):
 
 | Message | Extra fields |
@@ -36,7 +51,7 @@ All lines are structured klog (parseable with `logfmt`). `pod` renders as `<name
 
 `synthetic=true` marks PreFilter prunes: those per-node lines are synthesized from the aggregate PreFilter result (all nodes get the same status), not from evaluating each node.
 
-**Decision summary counters** (one line per scheduling attempt):
+**Decision summary counters** (one line per filtering pass):
 
 | Field | Meaning |
 |---|---|

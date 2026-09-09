@@ -50,3 +50,24 @@ func TestNamespaceResourceGuaranteeArgsConversionPreservesManagedVictimRestricti
 		t.Fatal("expected round-tripped args to retain managed-namespace victim restriction")
 	}
 }
+
+func TestNamespaceResourceGuaranteeRDMAConversion(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		external := &configv1.NamespaceResourceGuaranteeArgs{PreferNonRDMANodesForGuaranteedGPU: enabled}
+		internal := &config.NamespaceResourceGuaranteeArgs{}
+		scheme := GetPluginArgConversionScheme()
+		if err := scheme.Convert(external, internal, nil); err != nil {
+			t.Fatal(err)
+		}
+		if internal.PreferNonRDMANodesForGuaranteedGPU != enabled {
+			t.Fatal("internal conversion lost RDMA preference")
+		}
+		roundTrip := &configv1.NamespaceResourceGuaranteeArgs{}
+		if err := scheme.Convert(internal, roundTrip, nil); err != nil {
+			t.Fatal(err)
+		}
+		if roundTrip.PreferNonRDMANodesForGuaranteedGPU != enabled {
+			t.Fatal("v1 conversion lost RDMA preference")
+		}
+	}
+}

@@ -217,6 +217,11 @@ type NamespaceResourceGuaranteeArgs struct {
 	// When false, guaranteed Pods retain the existing cross-namespace preemption
 	// behavior.
 	RestrictGuaranteedPreemptionToManagedNamespaces bool
+
+	// PreferNonRDMANodesForGuaranteedGPU reserves RDMA nodes as a fallback for
+	// explicit guaranteed GPU pods that do not request RDMA. PDB safety takes
+	// precedence over the node preference. Defaults to false.
+	PreferNonRDMANodesForGuaranteedGPU bool
 }
 
 // ScoringStrategyType the type of scoring strategy used in NodeResourcesFit plugin.

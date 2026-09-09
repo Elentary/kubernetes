@@ -69,7 +69,7 @@ func (pl *NominatedNodeReservation) Name() string {
 }
 
 // Filter blocks nodes reserved for quota preemption from all non-holder pods.
-func (pl *NominatedNodeReservation) Filter(ctx context.Context, _ *framework.CycleState, pod *v1.Pod, nodeInfo *framework.NodeInfo) *framework.Status {
+func (pl *NominatedNodeReservation) Filter(ctx context.Context, state *framework.CycleState, pod *v1.Pod, nodeInfo *framework.NodeInfo) *framework.Status {
 	node := nodeInfo.Node()
 	if node == nil {
 		return framework.NewStatus(framework.Error, "node info is missing node object")
@@ -88,11 +88,17 @@ func (pl *NominatedNodeReservation) Filter(ctx context.Context, _ *framework.Cyc
 		holderPod, err := pl.podLister.Pods(reservation.HolderNamespace).Get(reservation.HolderName)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
+				if state != nil && state.IsPreemptionDryRun {
+					return nil
+				}
 				pl.cleanupStaleReservation(ctx, node.Name, reservation, nil, transitionReasonHolderNotFound, "holder pod not found")
 				return nil
 			}
 			logger.Error(err, "Failed to read holder pod for nominated node reservation", "node", node.Name, "holder", klog.KRef(reservation.HolderNamespace, reservation.HolderName), "holderUID", reservation.HolderPodUID)
 		} else if stale, reason, detail := isStaleReservation(holderPod, reservation, node.Name); stale {
+			if state != nil && state.IsPreemptionDryRun {
+				return nil
+			}
 			pl.cleanupStaleReservation(ctx, node.Name, reservation, holderPod, reason, detail)
 			return nil
 		}

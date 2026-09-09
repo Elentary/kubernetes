@@ -24,6 +24,27 @@ Deploying a release: update the scheduler Deployment's image to the new tag (or 
 - Config errors (validation failures in `NamespaceResourceGuaranteeArgs`) crash the scheduler at startup — watch the rollout.
 - The effective config is observable without cluster access via the `scheduler_namespace_resource_guarantee_quota` metric ([observability.md](observability.md) §3).
 
+### 2.1 Enabling RDMA fallback
+
+1. Build the scheduler with the new configuration field. First validate in a test
+   environment with both ordinary and RDMA GPU nodes: ordinary free placement,
+   ordinary preemption ahead of a free RDMA node, PDB-preserving RDMA fallback,
+   and completion of an existing nomination without a second eviction wave.
+2. Enable `NamespaceResourceGuarantee` in the Better-Scheduler profile's `filter`
+   list as well as its existing `preFilter` and `postFilter` lists. Keep
+   `DefaultPreemption` disabled in that profile. Preserve reservation plugins in
+   every profile.
+3. Set `preferNonRDMANodesForGuaranteedGPU: true` in that profile's arguments and
+   roll the Deployment. The default-profile quota backstop keeps the flag omitted
+   or false.
+4. Check scheduler readiness, `placement_phase` / `fallback_reason` decision logs,
+   victim deletions, nominated-node reservations, and Filter/PostFilter latency.
+   A free RDMA fallback must not delete any ordinary victims merely to test fit.
+
+Rollback: set the flag to false and roll the Deployment. If rolling back to an older
+binary, remove the new field first. Disabling the policy does not move bound Pods.
+The repository's unit tests do not substitute for this live placement validation.
+
 ## 3. Diagnosing "Why is my pod Pending / why did it land there?"
 
 - First stop: the Grafana decision dashboard ([observability.md](observability.md) §4) — enter namespace + pod name.
