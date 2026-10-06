@@ -2,12 +2,12 @@
 
 Ordered by how likely they are to bite.
 
-## 1. Binary self-reports the wrong version
+## 1. Binary version in historical releases
 
-- Symptom: an image tagged `v1.32.4-bs-v0.5` logs `version="v1.32.4-bs-v0.4-2-g1f374fb..."` at startup.
-- Cause: the embedded `gitVersion` comes from `git describe --tags --match='v*'` at build time (`hack/lib/version.sh`), but `hack/release-better-scheduler.sh` creates the release tag **after** building — so the newest visible tag is the previous release, plus a commit offset.
-- Impact: cosmetic but confusing during rollouts. The image tag, git tag, and ledger digest are always correct — trust those.
-- Fix options (not yet implemented): create the local git tag before the build and push it only after a successful image push; or inject the intended version explicitly via `KUBE_GIT_VERSION`/ldflags in the release script.
+The release helper now injects the intended version and verifies the built
+container before publication. This is fixed starting with the 1.33.13 release.
+Older images may self-report the preceding Git tag plus a commit offset; use the
+release ledger digest to identify those historical images.
 
 ## 2. NominatedNodeReservation store is in-memory and per-process
 
