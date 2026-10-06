@@ -161,6 +161,7 @@ function build_release_image() {
   log "Building release image via quick-release-images for tag ${release_tag}"
   (
     cd "${KUBE_ROOT}"
+    KUBE_GIT_VERSION="${release_tag}" \
     KUBE_BUILD_PLATFORMS=linux/amd64 \
     KUBE_BUILD_CONFORMANCE=n \
     KUBE_DOCKER_IMAGE_TAG="${release_tag}" \
@@ -264,6 +265,12 @@ function main() {
   run_preflight_tests
   build_release_image "${release_tag}"
   assert_local_image_exists "${source_image}"
+  local actual_version
+  actual_version=$(docker run --rm --entrypoint /usr/local/bin/kube-scheduler "${source_image}" --version)
+  [[ "${actual_version}" == "Kubernetes ${release_tag}" ]] || \
+    die "built scheduler version mismatch: ${actual_version} (expected Kubernetes ${release_tag})"
+  [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${source_image}")" == "linux/amd64" ]] || \
+    die "built scheduler image must target linux/amd64"
 
   log "Tagging ${source_image} -> ${target_image}"
   docker tag "${source_image}" "${target_image}"

@@ -1502,7 +1502,7 @@
           },
           "targets": [
             {
-              "expr": "max by (type) (scheduler_scheduler_cache_size{job=\"better-scheduler\"})",
+              "expr": "max by (type) (scheduler_cache_size{job=\"better-scheduler\"})",
               "legendFormat": "{{type}}",
               "refId": "A"
             }

@@ -19,9 +19,13 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/kubernetes/pkg/features"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	v1 "k8s.io/api/core/v1"
@@ -175,6 +179,15 @@ func deletedPods(cs *clientsetfake.Clientset) []string {
 }
 
 func TestRDMAPlacementOrder(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%v", async), func(t *testing.T) {
+			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SchedulerAsyncPreemption, async)
+			RDMAPlacementOrder(t)
+		})
+	}
+}
+
+func RDMAPlacementOrder(t *testing.T) {
 	tests := []struct {
 		name            string
 		setup           func(*rdmaFixture)
@@ -277,7 +290,7 @@ func TestRDMAPlacementOrder(t *testing.T) {
 			if nominated != tt.nominated {
 				t.Errorf("nomination=%q, want %q", nominated, tt.nominated)
 			}
-			if diff := cmp.Diff(tt.deleted, deletedPods(cs)); diff != "" {
+			if diff := cmp.Diff(tt.deleted, waitDeletedPods(t, cs, len(tt.deleted))); diff != "" {
 				t.Errorf("deleted pods (-want,+got): %s", diff)
 			}
 			if state.IsSchedulingRetry != tt.retry {
@@ -295,6 +308,15 @@ func TestRDMAPlacementOrder(t *testing.T) {
 }
 
 func TestRDMAInFlightPreemption(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%v", async), func(t *testing.T) {
+			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SchedulerAsyncPreemption, async)
+			RDMAInFlightPreemption(t)
+		})
+	}
+}
+
+func RDMAInFlightPreemption(t *testing.T) {
 	tests := []struct {
 		name, nomination              string
 		normalBusy, rdmaBusy, invalid bool
@@ -340,7 +362,7 @@ func TestRDMAInFlightPreemption(t *testing.T) {
 					t.Fatalf("unexpected nomination: %+v", result.nominatingInfo)
 				}
 			}
-			if diff := cmp.Diff(wantDeleted, deletedPods(cs)); diff != "" {
+			if diff := cmp.Diff(wantDeleted, waitDeletedPods(t, cs, len(wantDeleted))); diff != "" {
 				t.Fatal(diff)
 			}
 			if tt.host == "" && tt.newNomination == "" {
@@ -364,6 +386,15 @@ func TestRDMAInFlightPreemption(t *testing.T) {
 }
 
 func TestRDMAExhaustiveSearch(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%v", async), func(t *testing.T) {
+			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SchedulerAsyncPreemption, async)
+			RDMAExhaustiveSearch(t)
+		})
+	}
+}
+
+func RDMAExhaustiveSearch(t *testing.T) {
 	for _, preempt := range []bool{false, true} {
 		t.Run(fmt.Sprintf("preemption=%v", preempt), func(t *testing.T) {
 			f := newRDMAFixture()
@@ -391,7 +422,7 @@ func TestRDMAExhaustiveSearch(t *testing.T) {
 				if result.nominatingInfo == nil || result.nominatingInfo.NominatedNodeName != "ordinary-219" {
 					t.Fatalf("wrong nomination: %+v, %v", result, status)
 				}
-				if diff := cmp.Diff([]string{"ordinary-219-victim"}, deletedPods(cs)); diff != "" {
+				if diff := cmp.Diff([]string{"ordinary-219-victim"}, waitDeletedPods(t, cs, 1)); diff != "" {
 					t.Fatal(diff)
 				}
 			} else if !status.IsSuccess() || result.SuggestedHost != "ordinary-219" {
@@ -514,5 +545,18 @@ func TestRDMACanceledEvaluationDoesNotEvict(t *testing.T) {
 	}
 	if got := deletedPods(cs); len(got) != 0 {
 		t.Fatalf("evicted after cancellation: %v", got)
+	}
+}
+
+// Async preemption returns a nomination before the API deletion completes.
+func waitDeletedPods(t *testing.T, cs *clientsetfake.Clientset, count int) []string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got := deletedPods(cs)
+		if len(got) >= count || time.Now().After(deadline) {
+			return got
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

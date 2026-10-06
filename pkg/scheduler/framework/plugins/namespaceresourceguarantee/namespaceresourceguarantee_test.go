@@ -20,6 +20,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/kubernetes/pkg/features"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +51,7 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nominatednodereservation"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/queuesort"
 	plugintesting "k8s.io/kubernetes/pkg/scheduler/framework/plugins/testing"
+	"k8s.io/kubernetes/pkg/scheduler/framework/preemption"
 	frameworkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
 	tf "k8s.io/kubernetes/pkg/scheduler/testing/framework"
@@ -676,7 +680,11 @@ func TestScore(t *testing.T) {
 
 			plugin := plugintesting.SetupPlugin(ctx, t, New, &tt.args, internalcache.NewSnapshot(tt.existingPods, tt.nodes)).(*NamespaceResourceGuarantee)
 			for nodeName, want := range tt.wantScores {
-				got, status := plugin.Score(ctx, framework.NewCycleState(), tt.pod, nodeName)
+				nodeInfo, err := plugin.handle.SnapshotSharedLister().NodeInfos().Get(nodeName)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, status := plugin.Score(ctx, framework.NewCycleState(), tt.pod, nodeInfo)
 				if status != nil && !status.IsSuccess() {
 					t.Fatalf("unexpected score status for %s: %v", nodeName, status)
 				}
@@ -1170,6 +1178,14 @@ func TestPreFilterDoesNotEmitEvents(t *testing.T) {
 var nodeResourcesFitFunc = frameworkruntime.FactoryAdapter(feature.Features{}, noderesources.NewFit)
 
 func TestPostFilterEmitsStartedEventEndToEnd(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%v", async), func(t *testing.T) {
+			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SchedulerAsyncPreemption, async)
+			testPostFilterEmitsStartedEventEndToEnd(t)
+		})
+	}
+}
+func testPostFilterEmitsStartedEventEndToEnd(t *testing.T) {
 	resetMetricsForTest()
 	t.Cleanup(resetMetricsForTest)
 	metrics.Register()
@@ -1237,6 +1253,12 @@ func TestPostFilterEmitsStartedEventEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	plugin := pluginIface.(*NamespaceResourceGuarantee)
+	victimDone := make(chan struct{})
+	originalPreempt := plugin.evaluator.PreemptPod
+	plugin.evaluator.PreemptPod = func(ctx context.Context, c preemption.Candidate, preemptor, victim *v1.Pod, name string) error {
+		defer close(victimDone)
+		return originalPreempt(ctx, c, preemptor, victim, name)
+	}
 
 	state := framework.NewCycleState()
 	if _, status, _ := fh.RunPreFilterPlugins(ctx, state, preemptor); !status.IsSuccess() {
@@ -1254,6 +1276,11 @@ func TestPostFilterEmitsStartedEventEndToEnd(t *testing.T) {
 		t.Fatalf("unexpected postfilter result: %#v", result)
 	}
 
+	select {
+	case <-victimDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for victim deletion")
+	}
 	deadline := time.After(2 * time.Second)
 	for {
 		select {
