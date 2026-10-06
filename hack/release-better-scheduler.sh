@@ -168,6 +168,8 @@ function build_release_image() {
     KUBE_DOCKER_REGISTRY=registry.k8s.io \
     make quick-release-images
   )
+  # Upstream saves release images to tar and removes the local build tag.
+  docker load -i "${KUBE_ROOT}/_output/release-images/amd64/kube-scheduler.tar"
 }
 
 function assert_local_image_exists() {
