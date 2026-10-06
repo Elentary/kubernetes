@@ -132,6 +132,17 @@ reports missing in-flight Pods under 1.33; queue correctness is covered by the
 passing unit and integration suites.
 
 Artifacts from this run are retained locally under
-`_output/better-scheduler-validation/1.33.13/`. The image remains a local build
-until AWS authentication permits the release helper to push it and record an ECR
-digest. No release tag or ledger row should be created before that push succeeds.
+`_output/better-scheduler-validation/1.33.13/`.
+
+## Published release
+
+Published on 2026-10-06 with the release helper:
+
+- Tag: `v1.33.13-bs-v0.1`.
+- Source commit: `defdfa1b6d588bb5b71eb8bfb73f6785470e111a`.
+- Image: `767397673936.dkr.ecr.us-east-2.amazonaws.com/better-scheduler:v1.33.13-bs-v0.1`.
+- Immutable image: `767397673936.dkr.ecr.us-east-2.amazonaws.com/better-scheduler@sha256:51b15300fadb7323572a8b352ad138b0756ffac193836cfd8621c670c8fe4278`.
+
+ECR reports this digest for the tag, and the annotated Git tag records the same
+digest and source commit. The release ledger is committed on the 1.33 branch.
+Cluster deployment was not performed.
