@@ -33,7 +33,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-
 	v1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -56,7 +55,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/ktesting"
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
-	fwk "k8s.io/kube-scheduler/framework"
+	fwkapi "k8s.io/kube-scheduler/framework"
 	"k8s.io/kubernetes/pkg/features"
 	schedulerapi "k8s.io/kubernetes/pkg/scheduler/apis/config"
 	apicache "k8s.io/kubernetes/pkg/scheduler/backend/api_cache"
@@ -129,13 +128,13 @@ func (f *fakeExtender) SupportsPreemption() bool {
 	return false
 }
 
-func (f *fakeExtender) Filter(pod *v1.Pod, nodes []fwk.NodeInfo) ([]fwk.NodeInfo, extenderv1.FailedNodesMap, extenderv1.FailedNodesMap, error) {
+func (f *fakeExtender) Filter(pod *v1.Pod, nodes []fwkapi.NodeInfo) ([]fwkapi.NodeInfo, extenderv1.FailedNodesMap, extenderv1.FailedNodesMap, error) {
 	return nil, nil, nil, nil
 }
 
 func (f *fakeExtender) Prioritize(
 	_ *v1.Pod,
-	_ []fwk.NodeInfo,
+	_ []fwkapi.NodeInfo,
 ) (hostPriorities *extenderv1.HostPriorityList, weight int64, err error) {
 	return nil, 0, nil
 }
@@ -179,8 +178,8 @@ func (pl *falseMapPlugin) Name() string {
 	return "FalseMap"
 }
 
-func (pl *falseMapPlugin) Score(_ context.Context, _ fwk.CycleState, _ *v1.Pod, _ fwk.NodeInfo) (int64, *fwk.Status) {
-	return 0, fwk.AsStatus(errPrioritize)
+func (pl *falseMapPlugin) Score(_ context.Context, _ fwkapi.CycleState, _ *v1.Pod, _ fwkapi.NodeInfo) (int64, *fwkapi.Status) {
+	return 0, fwkapi.AsStatus(errPrioritize)
 }
 
 func (pl *falseMapPlugin) ScoreExtensions() framework.ScoreExtensions {
@@ -199,11 +198,11 @@ func (pl *numericMapPlugin) Name() string {
 	return "NumericMap"
 }
 
-func (pl *numericMapPlugin) Score(_ context.Context, _ fwk.CycleState, _ *v1.Pod, nodeInfo fwk.NodeInfo) (int64, *fwk.Status) {
+func (pl *numericMapPlugin) Score(_ context.Context, _ fwkapi.CycleState, _ *v1.Pod, nodeInfo fwkapi.NodeInfo) (int64, *fwkapi.Status) {
 	nodeName := nodeInfo.Node().Name
 	score, err := strconv.Atoi(nodeName)
 	if err != nil {
-		return 0, fwk.NewStatus(fwk.Error, fmt.Sprintf("Error converting nodename to int: %+v", nodeName))
+		return 0, fwkapi.NewStatus(fwkapi.Error, fmt.Sprintf("Error converting nodename to int: %+v", nodeName))
 	}
 	return int64(score), nil
 }
@@ -223,11 +222,11 @@ func (pl *reverseNumericMapPlugin) Name() string {
 	return "ReverseNumericMap"
 }
 
-func (pl *reverseNumericMapPlugin) Score(_ context.Context, _ fwk.CycleState, _ *v1.Pod, nodeInfo fwk.NodeInfo) (int64, *fwk.Status) {
+func (pl *reverseNumericMapPlugin) Score(_ context.Context, _ fwkapi.CycleState, _ *v1.Pod, nodeInfo fwkapi.NodeInfo) (int64, *fwkapi.Status) {
 	nodeName := nodeInfo.Node().Name
 	score, err := strconv.Atoi(nodeName)
 	if err != nil {
-		return 0, fwk.NewStatus(fwk.Error, fmt.Sprintf("Error converting nodename to int: %+v", nodeName))
+		return 0, fwkapi.NewStatus(fwkapi.Error, fmt.Sprintf("Error converting nodename to int: %+v", nodeName))
 	}
 	return int64(score), nil
 }
@@ -236,7 +235,7 @@ func (pl *reverseNumericMapPlugin) ScoreExtensions() framework.ScoreExtensions {
 	return pl
 }
 
-func (pl *reverseNumericMapPlugin) NormalizeScore(_ context.Context, _ fwk.CycleState, _ *v1.Pod, nodeScores framework.NodeScoreList) *fwk.Status {
+func (pl *reverseNumericMapPlugin) NormalizeScore(_ context.Context, _ fwkapi.CycleState, _ *v1.Pod, nodeScores framework.NodeScoreList) *fwkapi.Status {
 	var maxScore float64
 	minScore := math.MaxFloat64
 
@@ -265,7 +264,7 @@ func (pl *trueMapPlugin) Name() string {
 	return "TrueMap"
 }
 
-func (pl *trueMapPlugin) Score(_ context.Context, _ fwk.CycleState, _ *v1.Pod, _ fwk.NodeInfo) (int64, *fwk.Status) {
+func (pl *trueMapPlugin) Score(_ context.Context, _ fwkapi.CycleState, _ *v1.Pod, _ fwkapi.NodeInfo) (int64, *fwkapi.Status) {
 	return 1, nil
 }
 
@@ -273,10 +272,10 @@ func (pl *trueMapPlugin) ScoreExtensions() framework.ScoreExtensions {
 	return pl
 }
 
-func (pl *trueMapPlugin) NormalizeScore(_ context.Context, _ fwk.CycleState, _ *v1.Pod, nodeScores framework.NodeScoreList) *fwk.Status {
+func (pl *trueMapPlugin) NormalizeScore(_ context.Context, _ fwkapi.CycleState, _ *v1.Pod, nodeScores framework.NodeScoreList) *fwkapi.Status {
 	for _, host := range nodeScores {
 		if host.Name == "" {
-			return fwk.NewStatus(fwk.Error, "unexpected empty host name")
+			return fwkapi.NewStatus(fwkapi.Error, "unexpected empty host name")
 		}
 	}
 	return nil
@@ -296,11 +295,11 @@ func (pl *noPodsFilterPlugin) Name() string {
 }
 
 // Filter invoked at the filter extension point.
-func (pl *noPodsFilterPlugin) Filter(_ context.Context, _ fwk.CycleState, pod *v1.Pod, nodeInfo fwk.NodeInfo) *fwk.Status {
+func (pl *noPodsFilterPlugin) Filter(_ context.Context, _ fwkapi.CycleState, pod *v1.Pod, nodeInfo fwkapi.NodeInfo) *fwkapi.Status {
 	if len(nodeInfo.GetPods()) == 0 {
 		return nil
 	}
-	return fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake)
+	return fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake)
 }
 
 type fakeNodeSelectorArgs struct {
@@ -315,9 +314,9 @@ func (s *fakeNodeSelector) Name() string {
 	return "FakeNodeSelector"
 }
 
-func (s *fakeNodeSelector) Filter(_ context.Context, _ fwk.CycleState, _ *v1.Pod, nodeInfo fwk.NodeInfo) *fwk.Status {
+func (s *fakeNodeSelector) Filter(_ context.Context, _ fwkapi.CycleState, _ *v1.Pod, nodeInfo fwkapi.NodeInfo) *fwkapi.Status {
 	if nodeInfo.Node().Name != s.NodeName {
-		return fwk.NewStatus(fwk.UnschedulableAndUnresolvable)
+		return fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable)
 	}
 	return nil
 }
@@ -342,7 +341,7 @@ func (f *fakeNodeSelectorDependOnPodAnnotation) Name() string {
 }
 
 // Filter selects the specified one node and rejects other non-specified nodes.
-func (f *fakeNodeSelectorDependOnPodAnnotation) Filter(_ context.Context, _ fwk.CycleState, pod *v1.Pod, nodeInfo fwk.NodeInfo) *fwk.Status {
+func (f *fakeNodeSelectorDependOnPodAnnotation) Filter(_ context.Context, _ fwkapi.CycleState, pod *v1.Pod, nodeInfo fwkapi.NodeInfo) *fwkapi.Status {
 	resolveNodeNameFromPodAnnotation := func(pod *v1.Pod) (string, error) {
 		if pod == nil {
 			return "", fmt.Errorf("empty pod")
@@ -356,10 +355,10 @@ func (f *fakeNodeSelectorDependOnPodAnnotation) Filter(_ context.Context, _ fwk.
 
 	nodeName, err := resolveNodeNameFromPodAnnotation(pod)
 	if err != nil {
-		return fwk.AsStatus(err)
+		return fwkapi.AsStatus(err)
 	}
 	if nodeInfo.Node().Name != nodeName {
-		return fwk.NewStatus(fwk.UnschedulableAndUnresolvable)
+		return fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable)
 	}
 	return nil
 }
@@ -379,7 +378,7 @@ func (t *TestPlugin) Name() string {
 	return t.name
 }
 
-func (t *TestPlugin) Score(ctx context.Context, state fwk.CycleState, p *v1.Pod, nodeInfo fwk.NodeInfo) (int64, *fwk.Status) {
+func (t *TestPlugin) Score(ctx context.Context, state fwkapi.CycleState, p *v1.Pod, nodeInfo fwkapi.NodeInfo) (int64, *fwkapi.Status) {
 	return 1, nil
 }
 
@@ -387,7 +386,7 @@ func (t *TestPlugin) ScoreExtensions() framework.ScoreExtensions {
 	return nil
 }
 
-func (t *TestPlugin) Filter(ctx context.Context, state fwk.CycleState, pod *v1.Pod, nodeInfo fwk.NodeInfo) *fwk.Status {
+func (t *TestPlugin) Filter(ctx context.Context, state fwkapi.CycleState, pod *v1.Pod, nodeInfo fwkapi.NodeInfo) *fwkapi.Status {
 	return nil
 }
 
@@ -731,7 +730,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 			name:    "reserve failed with status code error",
 			sendPod: testPod,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterReservePlugin("FakeReserve", tf.NewFakeReservePlugin(fwk.AsStatus(reserveErr))),
+				tf.RegisterReservePlugin("FakeReserve", tf.NewFakeReservePlugin(fwkapi.AsStatus(reserveErr))),
 			},
 			mockScheduleResult:  scheduleResultOk,
 			expectErrorPod:      assignedTestPod,
@@ -745,7 +744,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 			name:    "reserve failed with status code rejected",
 			sendPod: testPod,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterReservePlugin("FakeReserve", tf.NewFakeReservePlugin(fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "rejected on reserve"))),
+				tf.RegisterReservePlugin("FakeReserve", tf.NewFakeReservePlugin(fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "rejected on reserve"))),
 			},
 			mockScheduleResult:       scheduleResultOk,
 			expectErrorPod:           assignedTestPod,
@@ -759,7 +758,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 			name:    "permit failed with status code error",
 			sendPod: testPod,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwk.AsStatus(permitErr), time.Minute)),
+				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwkapi.AsStatus(permitErr), time.Minute)),
 			},
 			mockScheduleResult:  scheduleResultOk,
 			expectErrorPod:      assignedTestPod,
@@ -773,7 +772,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 			name:    "permit failed with status code rejected",
 			sendPod: testPod,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwk.NewStatus(fwk.Unschedulable, "rejected on permit"), time.Minute)),
+				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwkapi.NewStatus(fwkapi.Unschedulable, "rejected on permit"), time.Minute)),
 			},
 			mockScheduleResult:       scheduleResultOk,
 			expectErrorPod:           assignedTestPod,
@@ -787,7 +786,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 			name:    "nominated node name is not set, permit plugin is working, but the feature gate NominatedNodeNameForExpectation is disabled",
 			sendPod: testPod,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwk.NewStatus(fwk.Wait, "rejected on permit"), time.Minute)),
+				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwkapi.NewStatus(fwkapi.Wait, "rejected on permit"), time.Minute)),
 			},
 			podToAdmit:                             &podToAdmit{pluginName: "FakePermit", pod: testPod.UID},
 			mockScheduleResult:                     scheduleResultOk,
@@ -800,7 +799,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 			name:    "nominated node name is set, permit plugin is working in wait on permit phase",
 			sendPod: testPod,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwk.NewStatus(fwk.Wait, "rejected on permit"), time.Minute)),
+				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwkapi.NewStatus(fwkapi.Wait, "rejected on permit"), time.Minute)),
 			},
 			podToAdmit:              &podToAdmit{pluginName: "FakePermit", pod: testPod.UID},
 			mockScheduleResult:      scheduleResultOk,
@@ -817,7 +816,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 			name:    "prebindpreflight failed with status code error",
 			sendPod: testPod,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPreBindPlugin("FakePreBind", tf.NewFakePreBindPlugin(fwk.AsStatus(preBindPreFlightErr), nil)),
+				tf.RegisterPreBindPlugin("FakePreBind", tf.NewFakePreBindPlugin(fwkapi.AsStatus(preBindPreFlightErr), nil)),
 			},
 			mockScheduleResult:                     scheduleResultOk,
 			expectErrorPod:                         assignedTestPod,
@@ -832,7 +831,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 			name:    "prebindpreflight failed with status code unschedulable",
 			sendPod: testPod,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPreBindPlugin("FakePreBind", tf.NewFakePreBindPlugin(fwk.NewStatus(fwk.Unschedulable, "rejected on prebindpreflight"), nil)),
+				tf.RegisterPreBindPlugin("FakePreBind", tf.NewFakePreBindPlugin(fwkapi.NewStatus(fwkapi.Unschedulable, "rejected on prebindpreflight"), nil)),
 			},
 			mockScheduleResult:                     scheduleResultOk,
 			expectErrorPod:                         assignedTestPod,
@@ -848,7 +847,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 			sendPod: testPod,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
 				// Configure it to return error on prebind to make sure it's not called.
-				tf.RegisterPreBindPlugin("FakePreBind", tf.NewFakePreBindPlugin(fwk.NewStatus(fwk.Skip), fwk.NewStatus(fwk.Error, "rejected on prebind"))),
+				tf.RegisterPreBindPlugin("FakePreBind", tf.NewFakePreBindPlugin(fwkapi.NewStatus(fwkapi.Skip), fwkapi.NewStatus(fwkapi.Error, "rejected on prebind"))),
 			},
 			mockScheduleResult:                     scheduleResultOk,
 			expectAssumedPod:                       assignedTestPod,
@@ -876,7 +875,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 			name:    "prebind failed with status code error",
 			sendPod: testPod,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPreBindPlugin("FakePreBind", tf.NewFakePreBindPlugin(nil, fwk.AsStatus(preBindErr))),
+				tf.RegisterPreBindPlugin("FakePreBind", tf.NewFakePreBindPlugin(nil, fwkapi.AsStatus(preBindErr))),
 			},
 			mockScheduleResult:                     scheduleResultOk,
 			expectErrorPod:                         assignedTestPod,
@@ -1100,10 +1099,10 @@ func TestSchedulerScheduleOne(t *testing.T) {
 						}
 						queue.Add(logger, item.sendPod)
 
-						sched.SchedulePod = func(ctx context.Context, fwk framework.Framework, state fwk.CycleState, pod *v1.Pod) (ScheduleResult, error) {
+						sched.SchedulePod = func(ctx context.Context, fwk framework.Framework, state fwkapi.CycleState, pod *v1.Pod) (ScheduleResult, error) {
 							return item.mockScheduleResult, item.injectSchedulingError
 						}
-						sched.FailureHandler = func(ctx context.Context, fwk framework.Framework, p *framework.QueuedPodInfo, status *fwk.Status, ni *framework.NominatingInfo, start time.Time) {
+						sched.FailureHandler = func(ctx context.Context, fwk framework.Framework, p *framework.QueuedPodInfo, status *fwkapi.Status, ni *framework.NominatingInfo, start time.Time) {
 							gotPod = p.Pod
 							gotError = status.AsError()
 							gotNominatingInfo = ni
@@ -1253,7 +1252,7 @@ func TestHandleSchedulingFailureSkipsRecreatedPod(t *testing.T) {
 	}
 
 	nominatingInfo := &framework.NominatingInfo{NominatingMode: framework.ModeOverride, NominatedNodeName: "node1"}
-	sched.handleSchedulingFailure(ctx, schedFramework, popped, fwk.NewStatus(fwk.Unschedulable, "no fit"), nominatingInfo, time.Now())
+	sched.handleSchedulingFailure(ctx, schedFramework, popped, fwkapi.NewStatus(fwkapi.Unschedulable, "no fit"), nominatingInfo, time.Now())
 
 	if err := wait.PollUntilContextTimeout(ctx, time.Millisecond, wait.ForeverTestTimeout, false, func(context.Context) (bool, error) {
 		return len(queue.InFlightPods()) == 0, nil
@@ -1305,8 +1304,8 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 		injectSchedulingError               error
 		injectBindError                     error
 		mockScheduleResult                  ScheduleResult
-		mockWaitOnPermitResult              *fwk.Status
-		mockRunPreBindPluginsResult         *fwk.Status
+		mockWaitOnPermitResult              *fwkapi.Status
+		mockRunPreBindPluginsResult         *fwkapi.Status
 		expectErrorPod                      *v1.Pod
 		expectAssumedPod                    *v1.Pod
 		expectError                         error
@@ -1320,7 +1319,7 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 			sendPod:            testPod,
 			mockScheduleResult: scheduleResultOk,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwk.AsStatus(permitErr), time.Minute)),
+				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwkapi.AsStatus(permitErr), time.Minute)),
 			},
 			expectErrorPod:                      assignedTestPod,
 			expectAssumedPod:                    assignedTestPod,
@@ -1333,7 +1332,7 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 			sendPod:            testPod,
 			mockScheduleResult: scheduleResultOk,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwk.NewStatus(fwk.Unschedulable, "on permit"), time.Minute)),
+				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwkapi.NewStatus(fwkapi.Unschedulable, "on permit"), time.Minute)),
 			},
 			expectErrorPod:                      assignedTestPod,
 			expectAssumedPod:                    assignedTestPod,
@@ -1346,9 +1345,9 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 			sendPod:            testPod,
 			mockScheduleResult: scheduleResultOk,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwk.NewStatus(fwk.Wait), time.Minute)),
+				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwkapi.NewStatus(fwkapi.Wait), time.Minute)),
 			},
-			mockWaitOnPermitResult:              fwk.AsStatus(waitOnPermitErr),
+			mockWaitOnPermitResult:              fwkapi.AsStatus(waitOnPermitErr),
 			expectErrorPod:                      assignedTestPod,
 			expectAssumedPod:                    assignedTestPod,
 			expectError:                         waitOnPermitErr,
@@ -1361,9 +1360,9 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 			sendPod:            testPod,
 			mockScheduleResult: scheduleResultOk,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwk.NewStatus(fwk.Wait), time.Minute)),
+				tf.RegisterPermitPlugin("FakePermit", tf.NewFakePermitPlugin(fwkapi.NewStatus(fwkapi.Wait), time.Minute)),
 			},
-			mockWaitOnPermitResult:              fwk.NewStatus(fwk.Unschedulable, "wait on permit"),
+			mockWaitOnPermitResult:              fwkapi.NewStatus(fwkapi.Unschedulable, "wait on permit"),
 			expectErrorPod:                      assignedTestPod,
 			expectAssumedPod:                    assignedTestPod,
 			expectError:                         makePredicateError("1 wait on permit"),
@@ -1376,10 +1375,10 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 			sendPod:            testPod,
 			mockScheduleResult: scheduleResultOk,
 			registerPluginFuncs: []tf.RegisterPluginFunc{
-				tf.RegisterPreBindPlugin("FakePreBind", tf.NewFakePreBindPlugin(nil, fwk.NewStatus(fwk.Unschedulable))),
+				tf.RegisterPreBindPlugin("FakePreBind", tf.NewFakePreBindPlugin(nil, fwkapi.NewStatus(fwkapi.Unschedulable))),
 			},
-			mockWaitOnPermitResult:              fwk.NewStatus(fwk.Success),
-			mockRunPreBindPluginsResult:         fwk.NewStatus(fwk.Unschedulable, preBindErr.Error()),
+			mockWaitOnPermitResult:              fwkapi.NewStatus(fwkapi.Success),
+			mockRunPreBindPluginsResult:         fwkapi.NewStatus(fwkapi.Unschedulable, preBindErr.Error()),
 			expectErrorPod:                      assignedTestPod,
 			expectAssumedPod:                    assignedTestPod,
 			expectError:                         preBindErr,
@@ -1393,8 +1392,8 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 			mockScheduleResult:                  scheduleResultOk,
 			expectBind:                          bindingOk,
 			expectAssumedPod:                    assignedTestPod,
-			mockWaitOnPermitResult:              fwk.NewStatus(fwk.Success),
-			mockRunPreBindPluginsResult:         fwk.NewStatus(fwk.Success),
+			mockWaitOnPermitResult:              fwkapi.NewStatus(fwkapi.Success),
+			mockRunPreBindPluginsResult:         fwkapi.NewStatus(fwkapi.Success),
 			eventReason:                         "Scheduled",
 			expectPodIsInFlightAtFailureHandler: false,
 			expectPodIsInFlightAtWaitOnPermit:   true,
@@ -1413,8 +1412,8 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 			name:                                "error bind forget pod failed scheduling",
 			sendPod:                             testPod,
 			mockScheduleResult:                  scheduleResultOk,
-			mockWaitOnPermitResult:              fwk.NewStatus(fwk.Success),
-			mockRunPreBindPluginsResult:         fwk.NewStatus(fwk.Success),
+			mockWaitOnPermitResult:              fwkapi.NewStatus(fwkapi.Success),
+			mockRunPreBindPluginsResult:         fwkapi.NewStatus(fwkapi.Success),
 			expectBind:                          bindingOk,
 			expectAssumedPod:                    assignedTestPod,
 			injectBindError:                     bindingErr,
@@ -1508,11 +1507,11 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 						schedFramework.SetAPICacher(apicache.New(queue, cache))
 					}
 
-					schedFramework.waitOnPermitFn = func(_ context.Context, pod *v1.Pod) *fwk.Status {
+					schedFramework.waitOnPermitFn = func(_ context.Context, pod *v1.Pod) *fwkapi.Status {
 						gotPodIsInFlightAtWaitOnPermit = podListContainsPod(schedFramework.queue.InFlightPods(), pod)
 						return item.mockWaitOnPermitResult
 					}
-					schedFramework.runPreBindPluginsFn = func(_ context.Context, _ fwk.CycleState, pod *v1.Pod, _ string) *fwk.Status {
+					schedFramework.runPreBindPluginsFn = func(_ context.Context, _ fwkapi.CycleState, pod *v1.Pod, _ string) *fwkapi.Status {
 						gotPodIsInFlightAtRunPreBindPlugins = podListContainsPod(schedFramework.queue.InFlightPods(), pod)
 						return item.mockRunPreBindPluginsResult
 					}
@@ -1527,10 +1526,10 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 					}
 					queue.Add(logger, item.sendPod)
 
-					sched.SchedulePod = func(ctx context.Context, fwk framework.Framework, state fwk.CycleState, pod *v1.Pod) (ScheduleResult, error) {
+					sched.SchedulePod = func(ctx context.Context, fwk framework.Framework, state fwkapi.CycleState, pod *v1.Pod) (ScheduleResult, error) {
 						return item.mockScheduleResult, item.injectSchedulingError
 					}
-					sched.FailureHandler = func(_ context.Context, fwk framework.Framework, p *framework.QueuedPodInfo, status *fwk.Status, _ *framework.NominatingInfo, _ time.Time) {
+					sched.FailureHandler = func(_ context.Context, fwk framework.Framework, p *framework.QueuedPodInfo, status *fwkapi.Status, _ *framework.NominatingInfo, _ time.Time) {
 						gotCallsToFailureHandler++
 						gotPodIsInFlightAtFailureHandler = podListContainsPod(queue.InFlightPods(), p.Pod)
 
@@ -1608,8 +1607,8 @@ func TestScheduleOneMarksPodAsProcessedBeforePreBind(t *testing.T) {
 type FakeFramework struct {
 	framework.Framework
 	queue               internalqueue.SchedulingQueue
-	waitOnPermitFn      func(context.Context, *v1.Pod) *fwk.Status
-	runPreBindPluginsFn func(context.Context, fwk.CycleState, *v1.Pod, string) *fwk.Status
+	waitOnPermitFn      func(context.Context, *v1.Pod) *fwkapi.Status
+	runPreBindPluginsFn func(context.Context, fwkapi.CycleState, *v1.Pod, string) *fwkapi.Status
 }
 
 func NewFakeFramework(ctx context.Context, schedQueue internalqueue.SchedulingQueue, fns []tf.RegisterPluginFunc,
@@ -1621,11 +1620,11 @@ func NewFakeFramework(ctx context.Context, schedQueue internalqueue.SchedulingQu
 		err
 }
 
-func (ff *FakeFramework) WaitOnPermit(ctx context.Context, pod *v1.Pod) *fwk.Status {
+func (ff *FakeFramework) WaitOnPermit(ctx context.Context, pod *v1.Pod) *fwkapi.Status {
 	return ff.waitOnPermitFn(ctx, pod)
 }
 
-func (ff *FakeFramework) RunPreBindPlugins(ctx context.Context, state fwk.CycleState, pod *v1.Pod, nodeName string) *fwk.Status {
+func (ff *FakeFramework) RunPreBindPlugins(ctx context.Context, state fwkapi.CycleState, pod *v1.Pod, nodeName string) *fwkapi.Status {
 	return ff.runPreBindPluginsFn(ctx, state, pod, nodeName)
 }
 
@@ -1763,9 +1762,9 @@ func TestSchedulerNoPhantomPodAfterDelete(t *testing.T) {
 					Pod:         secondPod,
 					NumAllNodes: 1,
 					Diagnosis: framework.Diagnosis{
-						NodeToStatus: framework.NewNodeToStatus(map[string]*fwk.Status{
-							node.Name: fwk.NewStatus(fwk.Unschedulable, nodeports.ErrReason).WithPlugin(nodeports.Name),
-						}, fwk.NewStatus(fwk.UnschedulableAndUnresolvable)),
+						NodeToStatus: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+							node.Name: fwkapi.NewStatus(fwkapi.Unschedulable, nodeports.ErrReason).WithPlugin(nodeports.Name),
+						}, fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable)),
 						UnschedulablePlugins: sets.New(nodeports.Name),
 					},
 				}
@@ -1866,8 +1865,8 @@ func TestSchedulerFailedSchedulingReasons(t *testing.T) {
 			// Create expected failure reasons for all the nodes. Hopefully they will get rolled up into a non-spammy summary.
 			failedNodeStatues := framework.NewDefaultNodeToStatus()
 			for _, node := range nodes {
-				failedNodeStatues.Set(node.Name, fwk.NewStatus(
-					fwk.UnschedulableAndUnresolvable,
+				failedNodeStatues.Set(node.Name, fwkapi.NewStatus(
+					fwkapi.UnschedulableAndUnresolvable,
 					fmt.Sprintf("Insufficient %v", v1.ResourceCPU),
 					fmt.Sprintf("Insufficient %v", v1.ResourceMemory),
 				).WithPlugin(noderesources.Name))
@@ -2564,7 +2563,7 @@ func Test_SelectHost(t *testing.T) {
 }
 
 func TestFindNodesThatPassExtenders(t *testing.T) {
-	absentStatus := fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "node(s) didn't satisfy plugin(s) [PreFilter]")
+	absentStatus := fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "node(s) didn't satisfy plugin(s) [PreFilter]")
 
 	tests := []struct {
 		name                  string
@@ -2584,7 +2583,7 @@ func TestFindNodesThatPassExtenders(t *testing.T) {
 				},
 			},
 			nodes:                 makeNodeList([]string{"a"}),
-			filteredNodesStatuses: framework.NewNodeToStatus(make(map[string]*fwk.Status), absentStatus),
+			filteredNodesStatuses: framework.NewNodeToStatus(make(map[string]*fwkapi.Status), absentStatus),
 			expectsErr:            true,
 		},
 		{
@@ -2596,30 +2595,30 @@ func TestFindNodesThatPassExtenders(t *testing.T) {
 				},
 			},
 			nodes:                 makeNodeList([]string{"a"}),
-			filteredNodesStatuses: framework.NewNodeToStatus(make(map[string]*fwk.Status), absentStatus),
+			filteredNodesStatuses: framework.NewNodeToStatus(make(map[string]*fwkapi.Status), absentStatus),
 			expectsErr:            false,
 			expectedNodes:         makeNodeList([]string{"a"}),
-			expectedStatuses:      framework.NewNodeToStatus(make(map[string]*fwk.Status), absentStatus),
+			expectedStatuses:      framework.NewNodeToStatus(make(map[string]*fwkapi.Status), absentStatus),
 		},
 		{
 			name: "unschedulable",
 			extenders: []tf.FakeExtender{
 				{
 					ExtenderName: "FakeExtender1",
-					Predicates: []tf.FitPredicate{func(pod *v1.Pod, node fwk.NodeInfo) *fwk.Status {
+					Predicates: []tf.FitPredicate{func(pod *v1.Pod, node fwkapi.NodeInfo) *fwkapi.Status {
 						if node.Node().Name == "a" {
-							return fwk.NewStatus(fwk.Success)
+							return fwkapi.NewStatus(fwkapi.Success)
 						}
-						return fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
+						return fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
 					}},
 				},
 			},
 			nodes:                 makeNodeList([]string{"a", "b"}),
-			filteredNodesStatuses: framework.NewNodeToStatus(make(map[string]*fwk.Status), absentStatus),
+			filteredNodesStatuses: framework.NewNodeToStatus(make(map[string]*fwkapi.Status), absentStatus),
 			expectsErr:            false,
 			expectedNodes:         makeNodeList([]string{"a"}),
-			expectedStatuses: framework.NewNodeToStatus(map[string]*fwk.Status{
-				"b": fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("FakeExtender: node %q failed", "b")),
+			expectedStatuses: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+				"b": fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("FakeExtender: node %q failed", "b")),
 			}, absentStatus),
 		},
 		{
@@ -2627,24 +2626,24 @@ func TestFindNodesThatPassExtenders(t *testing.T) {
 			extenders: []tf.FakeExtender{
 				{
 					ExtenderName: "FakeExtender1",
-					Predicates: []tf.FitPredicate{func(pod *v1.Pod, node fwk.NodeInfo) *fwk.Status {
+					Predicates: []tf.FitPredicate{func(pod *v1.Pod, node fwkapi.NodeInfo) *fwkapi.Status {
 						if node.Node().Name == "a" {
-							return fwk.NewStatus(fwk.Success)
+							return fwkapi.NewStatus(fwkapi.Success)
 						}
 						if node.Node().Name == "b" {
-							return fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
+							return fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
 						}
-						return fwk.NewStatus(fwk.UnschedulableAndUnresolvable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
+						return fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
 					}},
 				},
 			},
 			nodes:                 makeNodeList([]string{"a", "b", "c"}),
-			filteredNodesStatuses: framework.NewNodeToStatus(make(map[string]*fwk.Status), absentStatus),
+			filteredNodesStatuses: framework.NewNodeToStatus(make(map[string]*fwkapi.Status), absentStatus),
 			expectsErr:            false,
 			expectedNodes:         makeNodeList([]string{"a"}),
-			expectedStatuses: framework.NewNodeToStatus(map[string]*fwk.Status{
-				"b": fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("FakeExtender: node %q failed", "b")),
-				"c": fwk.NewStatus(fwk.UnschedulableAndUnresolvable, fmt.Sprintf("FakeExtender: node %q failed and unresolvable", "c")),
+			expectedStatuses: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+				"b": fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("FakeExtender: node %q failed", "b")),
+				"c": fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, fmt.Sprintf("FakeExtender: node %q failed and unresolvable", "c")),
 			}, absentStatus),
 		},
 		{
@@ -2652,26 +2651,26 @@ func TestFindNodesThatPassExtenders(t *testing.T) {
 			extenders: []tf.FakeExtender{
 				{
 					ExtenderName: "FakeExtender1",
-					Predicates: []tf.FitPredicate{func(pod *v1.Pod, node fwk.NodeInfo) *fwk.Status {
+					Predicates: []tf.FitPredicate{func(pod *v1.Pod, node fwkapi.NodeInfo) *fwkapi.Status {
 						if node.Node().Name == "a" {
-							return fwk.NewStatus(fwk.Success)
+							return fwkapi.NewStatus(fwkapi.Success)
 						}
 						if node.Node().Name == "b" {
-							return fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
+							return fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
 						}
-						return fwk.NewStatus(fwk.UnschedulableAndUnresolvable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
+						return fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
 					}},
 				},
 			},
 			nodes: makeNodeList([]string{"a", "b"}),
-			filteredNodesStatuses: framework.NewNodeToStatus(map[string]*fwk.Status{
-				"c": fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("FakeFilterPlugin: node %q failed", "c")),
+			filteredNodesStatuses: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+				"c": fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("FakeFilterPlugin: node %q failed", "c")),
 			}, absentStatus),
 			expectsErr:    false,
 			expectedNodes: makeNodeList([]string{"a"}),
-			expectedStatuses: framework.NewNodeToStatus(map[string]*fwk.Status{
-				"b": fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("FakeExtender: node %q failed", "b")),
-				"c": fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("FakeFilterPlugin: node %q failed", "c")),
+			expectedStatuses: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+				"b": fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("FakeExtender: node %q failed", "b")),
+				"c": fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("FakeFilterPlugin: node %q failed", "c")),
 			}, absentStatus),
 		},
 		{
@@ -2679,33 +2678,33 @@ func TestFindNodesThatPassExtenders(t *testing.T) {
 			extenders: []tf.FakeExtender{
 				{
 					ExtenderName: "FakeExtender1",
-					Predicates: []tf.FitPredicate{func(pod *v1.Pod, node fwk.NodeInfo) *fwk.Status {
+					Predicates: []tf.FitPredicate{func(pod *v1.Pod, node fwkapi.NodeInfo) *fwkapi.Status {
 						if node.Node().Name == "a" {
-							return fwk.NewStatus(fwk.Success)
+							return fwkapi.NewStatus(fwkapi.Success)
 						}
 						if node.Node().Name == "b" {
-							return fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
+							return fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
 						}
-						return fwk.NewStatus(fwk.UnschedulableAndUnresolvable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
+						return fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
 					}},
 				},
 				{
 					ExtenderName: "FakeExtender1",
-					Predicates: []tf.FitPredicate{func(pod *v1.Pod, node fwk.NodeInfo) *fwk.Status {
+					Predicates: []tf.FitPredicate{func(pod *v1.Pod, node fwkapi.NodeInfo) *fwkapi.Status {
 						if node.Node().Name == "a" {
-							return fwk.NewStatus(fwk.Success)
+							return fwkapi.NewStatus(fwkapi.Success)
 						}
-						return fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
+						return fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("node %q is not allowed", node.Node().Name))
 					}},
 				},
 			},
 			nodes:                 makeNodeList([]string{"a", "b", "c"}),
-			filteredNodesStatuses: framework.NewNodeToStatus(make(map[string]*fwk.Status), absentStatus),
+			filteredNodesStatuses: framework.NewNodeToStatus(make(map[string]*fwkapi.Status), absentStatus),
 			expectsErr:            false,
 			expectedNodes:         makeNodeList([]string{"a"}),
-			expectedStatuses: framework.NewNodeToStatus(map[string]*fwk.Status{
-				"b": fwk.NewStatus(fwk.Unschedulable, fmt.Sprintf("FakeExtender: node %q failed", "b")),
-				"c": fwk.NewStatus(fwk.UnschedulableAndUnresolvable, fmt.Sprintf("FakeExtender: node %q failed and unresolvable", "c")),
+			expectedStatuses: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+				"b": fwkapi.NewStatus(fwkapi.Unschedulable, fmt.Sprintf("FakeExtender: node %q failed", "b")),
+				"c": fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, fmt.Sprintf("FakeExtender: node %q failed and unresolvable", "c")),
 			}, absentStatus),
 		},
 	}
@@ -2774,10 +2773,10 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("2").UID("2").Obj(),
 				NumAllNodes: 2,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus: framework.NewNodeToStatus(map[string]*fwk.Status{
-						"node1": fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake).WithPlugin("FalseFilter"),
-						"node2": fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake).WithPlugin("FalseFilter"),
-					}, fwk.NewStatus(fwk.UnschedulableAndUnresolvable)),
+					NodeToStatus: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+						"node1": fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake).WithPlugin("FalseFilter"),
+						"node2": fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake).WithPlugin("FalseFilter"),
+					}, fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable)),
 					UnschedulablePlugins: sets.New("FalseFilter"),
 				},
 			},
@@ -2885,11 +2884,11 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("2").UID("2").Obj(),
 				NumAllNodes: 3,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus: framework.NewNodeToStatus(map[string]*fwk.Status{
-						"3": fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake).WithPlugin("FalseFilter"),
-						"2": fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake).WithPlugin("FalseFilter"),
-						"1": fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake).WithPlugin("FalseFilter"),
-					}, fwk.NewStatus(fwk.UnschedulableAndUnresolvable)),
+					NodeToStatus: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+						"3": fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake).WithPlugin("FalseFilter"),
+						"2": fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake).WithPlugin("FalseFilter"),
+						"1": fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake).WithPlugin("FalseFilter"),
+					}, fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable)),
 					UnschedulablePlugins: sets.New("FalseFilter"),
 				},
 			},
@@ -2915,10 +2914,10 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("2").UID("2").Obj(),
 				NumAllNodes: 2,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus: framework.NewNodeToStatus(map[string]*fwk.Status{
-						"1": fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake).WithPlugin("MatchFilter"),
-						"2": fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake).WithPlugin("NoPodsFilter"),
-					}, fwk.NewStatus(fwk.UnschedulableAndUnresolvable)),
+					NodeToStatus: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+						"1": fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake).WithPlugin("MatchFilter"),
+						"2": fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake).WithPlugin("NoPodsFilter"),
+					}, fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable)),
 					UnschedulablePlugins: sets.New("MatchFilter", "NoPodsFilter"),
 				},
 			},
@@ -2968,7 +2967,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("ignore").UID("ignore").PVC("unknownPVC").Obj(),
 				NumAllNodes: 2,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwk.Status), fwk.NewStatus(fwk.UnschedulableAndUnresolvable, `persistentvolumeclaim "unknownPVC" not found`).WithPlugin("VolumeBinding")),
+					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwkapi.Status), fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, `persistentvolumeclaim "unknownPVC" not found`).WithPlugin("VolumeBinding")),
 					PreFilterMsg:         `persistentvolumeclaim "unknownPVC" not found`,
 					UnschedulablePlugins: sets.New(volumebinding.Name),
 				},
@@ -2993,7 +2992,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("ignore").UID("ignore").Namespace(v1.NamespaceDefault).PVC("existingPVC").Obj(),
 				NumAllNodes: 2,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwk.Status), fwk.NewStatus(fwk.UnschedulableAndUnresolvable, `persistentvolumeclaim "existingPVC" is being deleted`).WithPlugin("VolumeBinding")),
+					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwkapi.Status), fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, `persistentvolumeclaim "existingPVC" is being deleted`).WithPlugin("VolumeBinding")),
 					PreFilterMsg:         `persistentvolumeclaim "existingPVC" is being deleted`,
 					UnschedulablePlugins: sets.New(volumebinding.Name),
 				},
@@ -3085,7 +3084,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterFilterPlugin(
 					"FakeFilter",
-					tf.NewFakeFilterPlugin(map[string]fwk.Code{"3": fwk.Unschedulable}),
+					tf.NewFakeFilterPlugin(map[string]fwkapi.Code{"3": fwkapi.Unschedulable}),
 				),
 				tf.RegisterScorePlugin("NumericMap", newNumericMapPlugin(), 1),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
@@ -3099,9 +3098,9 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("test-filter").UID("test-filter").Obj(),
 				NumAllNodes: 1,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus: framework.NewNodeToStatus(map[string]*fwk.Status{
-						"3": fwk.NewStatus(fwk.Unschedulable, "injecting failure for pod test-filter").WithPlugin("FakeFilter"),
-					}, fwk.NewStatus(fwk.UnschedulableAndUnresolvable)),
+					NodeToStatus: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+						"3": fwkapi.NewStatus(fwkapi.Unschedulable, "injecting failure for pod test-filter").WithPlugin("FakeFilter"),
+					}, fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable)),
 					UnschedulablePlugins: sets.New("FakeFilter"),
 				},
 			},
@@ -3112,7 +3111,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterFilterPlugin(
 					"FakeFilter",
-					tf.NewFakeFilterPlugin(map[string]fwk.Code{"3": fwk.Unschedulable}),
+					tf.NewFakeFilterPlugin(map[string]fwkapi.Code{"3": fwkapi.Unschedulable}),
 				),
 				tf.RegisterScorePlugin("NumericMap", newNumericMapPlugin(), 1),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
@@ -3134,11 +3133,11 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("test-filter").UID("test-filter").Obj(),
 				NumAllNodes: 3,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus: framework.NewNodeToStatus(map[string]*fwk.Status{
-						"1": fwk.NewStatus(fwk.Unschedulable, `FakeExtender: node "1" failed`),
-						"2": fwk.NewStatus(fwk.Unschedulable, `FakeExtender: node "2" failed`),
-						"3": fwk.NewStatus(fwk.Unschedulable, "injecting failure for pod test-filter").WithPlugin("FakeFilter"),
-					}, fwk.NewStatus(fwk.UnschedulableAndUnresolvable)),
+					NodeToStatus: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+						"1": fwkapi.NewStatus(fwkapi.Unschedulable, `FakeExtender: node "1" failed`),
+						"2": fwkapi.NewStatus(fwkapi.Unschedulable, `FakeExtender: node "2" failed`),
+						"3": fwkapi.NewStatus(fwkapi.Unschedulable, "injecting failure for pod test-filter").WithPlugin("FakeFilter"),
+					}, fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable)),
 					UnschedulablePlugins: sets.New("FakeFilter", framework.ExtenderName),
 				},
 			},
@@ -3149,7 +3148,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterFilterPlugin(
 					"FakeFilter",
-					tf.NewFakeFilterPlugin(map[string]fwk.Code{"3": fwk.UnschedulableAndUnresolvable}),
+					tf.NewFakeFilterPlugin(map[string]fwkapi.Code{"3": fwkapi.UnschedulableAndUnresolvable}),
 				),
 				tf.RegisterScorePlugin("NumericMap", newNumericMapPlugin(), 1),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
@@ -3163,9 +3162,9 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("test-filter").UID("test-filter").Obj(),
 				NumAllNodes: 1,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus: framework.NewNodeToStatus(map[string]*fwk.Status{
-						"3": fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "injecting failure for pod test-filter").WithPlugin("FakeFilter"),
-					}, fwk.NewStatus(fwk.UnschedulableAndUnresolvable)),
+					NodeToStatus: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+						"3": fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "injecting failure for pod test-filter").WithPlugin("FakeFilter"),
+					}, fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable)),
 					UnschedulablePlugins: sets.New("FakeFilter"),
 				},
 			},
@@ -3176,7 +3175,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterFilterPlugin(
 					"FakeFilter",
-					tf.NewFakeFilterPlugin(map[string]fwk.Code{"1": fwk.Unschedulable}),
+					tf.NewFakeFilterPlugin(map[string]fwkapi.Code{"1": fwkapi.Unschedulable}),
 				),
 				tf.RegisterScorePlugin("NumericMap", newNumericMapPlugin(), 1),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
@@ -3195,7 +3194,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter",
-					tf.NewFakePreFilterPlugin("FakePreFilter", nil, fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "injected unschedulable status")),
+					tf.NewFakePreFilterPlugin("FakePreFilter", nil, fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "injected unschedulable status")),
 				),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
@@ -3209,7 +3208,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("test-prefilter").UID("test-prefilter").Obj(),
 				NumAllNodes: 2,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwk.Status), fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "injected unschedulable status").WithPlugin("FakePreFilter")),
+					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwkapi.Status), fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "injected unschedulable status").WithPlugin("FakePreFilter")),
 					PreFilterMsg:         "injected unschedulable status",
 					UnschedulablePlugins: sets.New("FakePreFilter"),
 				},
@@ -3221,7 +3220,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter",
-					tf.NewFakePreFilterPlugin("FakePreFilter", nil, fwk.NewStatus(fwk.Error, "injected error status")),
+					tf.NewFakePreFilterPlugin("FakePreFilter", nil, fwkapi.NewStatus(fwkapi.Error, "injected error status")),
 				),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
@@ -3289,7 +3288,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("test-prefilter").UID("test-prefilter").Obj(),
 				NumAllNodes: 3,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwk.Status), fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "node(s) didn't satisfy plugin(s) [FakePreFilter2 FakePreFilter3] simultaneously")),
+					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwkapi.Status), fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "node(s) didn't satisfy plugin(s) [FakePreFilter2 FakePreFilter3] simultaneously")),
 					UnschedulablePlugins: sets.New("FakePreFilter2", "FakePreFilter3"),
 					PreFilterMsg:         "node(s) didn't satisfy plugin(s) [FakePreFilter2 FakePreFilter3] simultaneously",
 				},
@@ -3317,7 +3316,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("test-prefilter").UID("test-prefilter").Obj(),
 				NumAllNodes: 1,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwk.Status), fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "node(s) didn't satisfy plugin FakePreFilter2")),
+					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwkapi.Status), fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "node(s) didn't satisfy plugin FakePreFilter2")),
 					UnschedulablePlugins: sets.New("FakePreFilter2"),
 					PreFilterMsg:         "node(s) didn't satisfy plugin FakePreFilter2",
 				},
@@ -3333,7 +3332,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				),
 				tf.RegisterFilterPlugin(
 					"FakeFilter",
-					tf.NewFakeFilterPlugin(map[string]fwk.Code{"node2": fwk.Unschedulable}),
+					tf.NewFakeFilterPlugin(map[string]fwkapi.Code{"node2": fwkapi.Unschedulable}),
 				),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
@@ -3346,9 +3345,9 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("test-prefilter").UID("test-prefilter").Obj(),
 				NumAllNodes: 2,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus: framework.NewNodeToStatus(map[string]*fwk.Status{
-						"node2": fwk.NewStatus(fwk.Unschedulable, "injecting failure for pod test-prefilter").WithPlugin("FakeFilter"),
-					}, fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "node(s) didn't satisfy plugin(s) [FakePreFilter]")),
+					NodeToStatus: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+						"node2": fwkapi.NewStatus(fwkapi.Unschedulable, "injecting failure for pod test-prefilter").WithPlugin("FakeFilter"),
+					}, fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "node(s) didn't satisfy plugin(s) [FakePreFilter]")),
 					UnschedulablePlugins: sets.New("FakePreFilter", "FakeFilter"),
 					PreFilterMsg:         "",
 				},
@@ -3364,21 +3363,21 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				),
 				tf.RegisterFilterPlugin(
 					"FakeFilter1",
-					tf.NewFakeFilterPlugin(map[string]fwk.Code{
-						"node1": fwk.Unschedulable,
+					tf.NewFakeFilterPlugin(map[string]fwkapi.Code{
+						"node1": fwkapi.Unschedulable,
 					}),
 				),
 				tf.RegisterPluginAsExtensions("FakeFilter2", func(_ context.Context, configuration runtime.Object, f framework.Handle) (framework.Plugin, error) {
 					return tf.FakePreFilterAndFilterPlugin{
 						FakePreFilterPlugin: &tf.FakePreFilterPlugin{
 							Result: nil,
-							Status: fwk.NewStatus(fwk.Skip),
+							Status: fwkapi.NewStatus(fwkapi.Skip),
 						},
 						FakeFilterPlugin: &tf.FakeFilterPlugin{
 							// This Filter plugin shouldn't be executed in the Filter extension point due to skip.
 							// To confirm that, return the status code Error to all Nodes.
-							FailedNodeReturnCodeMap: map[string]fwk.Code{
-								"node1": fwk.Error, "node2": fwk.Error, "node3": fwk.Error,
+							FailedNodeReturnCodeMap: map[string]fwkapi.Code{
+								"node1": fwkapi.Error, "node2": fwkapi.Error, "node3": fwkapi.Error,
 							},
 						},
 					}, nil
@@ -3402,8 +3401,8 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				tf.RegisterFilterPlugin("TrueFilter", tf.NewTrueFilterPlugin),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 				tf.RegisterPluginAsExtensions("FakePreScoreAndScorePlugin", tf.NewFakePreScoreAndScorePlugin("FakePreScoreAndScorePlugin", 0,
-					fwk.NewStatus(fwk.Skip, "fake skip"),
-					fwk.NewStatus(fwk.Error, "this score function shouldn't be executed because this plugin returned Skip in the PreScore"),
+					fwkapi.NewStatus(fwkapi.Skip, "fake skip"),
+					fwkapi.NewStatus(fwkapi.Error, "this score function shouldn't be executed because this plugin returned Skip in the PreScore"),
 				), "PreScore", "Score"),
 			},
 			nodes: []*v1.Node{
@@ -3471,7 +3470,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				Pod:         st.MakePod().Name("test-prefilter").UID("test-prefilter").Obj(),
 				NumAllNodes: 2,
 				Diagnosis: framework.Diagnosis{
-					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwk.Status), fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "node(s) didn't satisfy plugin(s) [FakePreFilter]")),
+					NodeToStatus:         framework.NewNodeToStatus(make(map[string]*fwkapi.Status), fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "node(s) didn't satisfy plugin(s) [FakePreFilter]")),
 					UnschedulablePlugins: sets.New("FakePreFilter"),
 				},
 			},
@@ -3632,11 +3631,11 @@ func TestFindFitAllError(t *testing.T) {
 	}
 
 	expected := framework.Diagnosis{
-		NodeToStatus: framework.NewNodeToStatus(map[string]*fwk.Status{
-			"1": fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake).WithPlugin("MatchFilter"),
-			"2": fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake).WithPlugin("MatchFilter"),
-			"3": fwk.NewStatus(fwk.Unschedulable, tf.ErrReasonFake).WithPlugin("MatchFilter"),
-		}, fwk.NewStatus(fwk.UnschedulableAndUnresolvable)),
+		NodeToStatus: framework.NewNodeToStatus(map[string]*fwkapi.Status{
+			"1": fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake).WithPlugin("MatchFilter"),
+			"2": fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake).WithPlugin("MatchFilter"),
+			"3": fwkapi.NewStatus(fwkapi.Unschedulable, tf.ErrReasonFake).WithPlugin("MatchFilter"),
+		}, fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable)),
 		UnschedulablePlugins: sets.New("MatchFilter"),
 	}
 	if diff := cmp.Diff(expected, diagnosis, schedulerCmpOpts...); diff != "" {
@@ -4114,8 +4113,8 @@ func Test_prioritizeNodes(t *testing.T) {
 				tf.RegisterScorePlugin("Node2Prioritizer", tf.NewNode2PrioritizerPlugin(), 1),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 				tf.RegisterPluginAsExtensions("FakePreScoreAndScorePlugin", tf.NewFakePreScoreAndScorePlugin("FakePreScoreAndScorePlugin", 0,
-					fwk.NewStatus(fwk.Skip, "fake skip"),
-					fwk.NewStatus(fwk.Error, "this score function shouldn't be executed because this plugin returned Skip in the PreScore"),
+					fwkapi.NewStatus(fwkapi.Skip, "fake skip"),
+					fwkapi.NewStatus(fwkapi.Error, "this score function shouldn't be executed because this plugin returned Skip in the PreScore"),
 				), "PreScore", "Score"),
 			},
 			extenders: nil,
@@ -4158,8 +4157,8 @@ func Test_prioritizeNodes(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 				tf.RegisterPluginAsExtensions("FakePreScoreAndScorePlugin", tf.NewFakePreScoreAndScorePlugin("FakePreScoreAndScorePlugin", 0,
-					fwk.NewStatus(fwk.Skip, "fake skip"),
-					fwk.NewStatus(fwk.Error, "this score function shouldn't be executed because this plugin returned Skip in the PreScore"),
+					fwkapi.NewStatus(fwkapi.Skip, "fake skip"),
+					fwkapi.NewStatus(fwkapi.Error, "this score function shouldn't be executed because this plugin returned Skip in the PreScore"),
 				), "PreScore", "Score"),
 			},
 			extenders: nil,
@@ -4358,7 +4357,7 @@ func TestPrioritizeNodesDecisionLogs(t *testing.T) {
 			tCtx := testktesting.Init(t, initoption.BufferLogs(true))
 			client := clientsetfake.NewClientset()
 			informerFactory := informers.NewSharedInformerFactory(client, 0)
-			cache := internalcache.New(tCtx, 0)
+			cache := internalcache.New(tCtx, 0, nil)
 			nodes := []*v1.Node{
 				makeNode("node1", 1000, schedutil.DefaultMemoryRequest*10),
 				makeNode("node2", 1000, schedutil.DefaultMemoryRequest*10),
@@ -4527,6 +4526,7 @@ func TestFindNodesThatFitPodDecisionLogs(t *testing.T) {
 				tCtx,
 				test.registerPlugins,
 				test.profileName,
+				frameworkruntime.WithSnapshotSharedLister(scheduler.nodeInfoSnapshot),
 				frameworkruntime.WithPodNominator(internalqueue.NewTestQueue(tCtx, nil)),
 			)
 			if err != nil {
@@ -4676,7 +4676,7 @@ func TestPreferNominatedNodeFilterCallCounts(t *testing.T) {
 	tests := []struct {
 		name              string
 		pod               *v1.Pod
-		nodeReturnCodeMap map[string]fwk.Code
+		nodeReturnCodeMap map[string]fwkapi.Code
 		expectedCount     int32
 	}{
 		{
@@ -4692,7 +4692,7 @@ func TestPreferNominatedNodeFilterCallCounts(t *testing.T) {
 		{
 			name:              "nominated pod cannot pass the filter, filter is called for each node",
 			pod:               st.MakePod().Name("p_with_nominated_node").UID("p").Priority(highPriority).NominatedNodeName("node1").Obj(),
-			nodeReturnCodeMap: map[string]fwk.Code{"node1": fwk.Unschedulable},
+			nodeReturnCodeMap: map[string]fwkapi.Code{"node1": fwkapi.Unschedulable},
 			expectedCount:     4,
 		},
 	}
@@ -4918,7 +4918,7 @@ func setupTestScheduler(ctx context.Context, t *testing.T, client clientset.Inte
 	}
 
 	sched.SchedulePod = sched.schedulePod
-	sched.FailureHandler = func(_ context.Context, _ framework.Framework, p *framework.QueuedPodInfo, status *fwk.Status, _ *framework.NominatingInfo, _ time.Time) {
+	sched.FailureHandler = func(_ context.Context, _ framework.Framework, p *framework.QueuedPodInfo, status *fwkapi.Status, _ *framework.NominatingInfo, _ time.Time) {
 		err := status.AsError()
 		errChan <- err
 

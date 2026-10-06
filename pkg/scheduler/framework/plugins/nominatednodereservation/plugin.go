@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+	fwk "k8s.io/kube-scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/names"
 )
@@ -69,10 +70,10 @@ func (pl *NominatedNodeReservation) Name() string {
 }
 
 // Filter blocks nodes reserved for quota preemption from all non-holder pods.
-func (pl *NominatedNodeReservation) Filter(ctx context.Context, state *framework.CycleState, pod *v1.Pod, nodeInfo *framework.NodeInfo) *framework.Status {
+func (pl *NominatedNodeReservation) Filter(ctx context.Context, state fwk.CycleState, pod *v1.Pod, nodeInfo fwk.NodeInfo) *fwk.Status {
 	node := nodeInfo.Node()
 	if node == nil {
-		return framework.NewStatus(framework.Error, "node info is missing node object")
+		return fwk.NewStatus(fwk.Error, "node info is missing node object")
 	}
 
 	reservation, ok := pl.store.Get(node.Name)
@@ -88,7 +89,7 @@ func (pl *NominatedNodeReservation) Filter(ctx context.Context, state *framework
 		holderPod, err := pl.podLister.Pods(reservation.HolderNamespace).Get(reservation.HolderName)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				if state != nil && state.IsPreemptionDryRun {
+				if state != nil && framework.IsPreemptionDryRun(state) {
 					return nil
 				}
 				pl.cleanupStaleReservation(ctx, node.Name, reservation, nil, transitionReasonHolderNotFound, "holder pod not found")
@@ -96,7 +97,7 @@ func (pl *NominatedNodeReservation) Filter(ctx context.Context, state *framework
 			}
 			logger.Error(err, "Failed to read holder pod for nominated node reservation", "node", node.Name, "holder", klog.KRef(reservation.HolderNamespace, reservation.HolderName), "holderUID", reservation.HolderPodUID)
 		} else if stale, reason, detail := isStaleReservation(holderPod, reservation, node.Name); stale {
-			if state != nil && state.IsPreemptionDryRun {
+			if state != nil && framework.IsPreemptionDryRun(state) {
 				return nil
 			}
 			pl.cleanupStaleReservation(ctx, node.Name, reservation, holderPod, reason, detail)
@@ -107,11 +108,11 @@ func (pl *NominatedNodeReservation) Filter(ctx context.Context, state *framework
 	recordBlockedPod(pl.profile)
 	logger.V(3).Info("Blocking pod on reserved nominated node", "pod", klog.KObj(pod), "node", node.Name, "holder", klog.KRef(reservation.HolderNamespace, reservation.HolderName), "holderUID", reservation.HolderPodUID)
 	reason := fmt.Sprintf("%s by %s/%s", ErrReasonNodeReserved, reservation.HolderNamespace, reservation.HolderName)
-	return framework.NewStatus(framework.Unschedulable, reason)
+	return fwk.NewStatus(fwk.Unschedulable, reason)
 }
 
 // PostBind releases reservation once the holder pod is bound.
-func (pl *NominatedNodeReservation) PostBind(ctx context.Context, _ *framework.CycleState, pod *v1.Pod, _ string) {
+func (pl *NominatedNodeReservation) PostBind(ctx context.Context, _ fwk.CycleState, pod *v1.Pod, _ string) {
 	released, ok := pl.store.ReleaseByPod(pod.UID)
 	if !ok {
 		return

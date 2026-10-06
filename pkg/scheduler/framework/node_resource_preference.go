@@ -19,9 +19,10 @@ package framework
 import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	fwk "k8s.io/kube-scheduler/framework"
 )
 
-const nodeResourcePreferenceKey StateKey = "nodeResourcePreference"
+const nodeResourcePreferenceKey fwk.StateKey = "nodeResourcePreference"
 
 // NodeResourcePreference defers nodes advertising Resource until PostFilter has
 // exhausted preferred placements. It also requests exhaustive filtering, so
@@ -33,16 +34,16 @@ type NodeResourcePreference struct {
 	NodeNames sets.Set[string]
 }
 
-func (s *NodeResourcePreference) Clone() StateData {
+func (s *NodeResourcePreference) Clone() fwk.StateData {
 	copy := *s
 	return &copy
 }
 
-func WriteNodeResourcePreference(state *CycleState, preference *NodeResourcePreference) {
+func WriteNodeResourcePreference(state fwk.CycleState, preference *NodeResourcePreference) {
 	state.Write(nodeResourcePreferenceKey, preference)
 }
 
-func NodeResourcePreferenceFromState(state *CycleState) *NodeResourcePreference {
+func NodeResourcePreferenceFromState(state fwk.CycleState) *NodeResourcePreference {
 	if state == nil {
 		return nil
 	}
@@ -62,4 +63,39 @@ func NodeHasResource(node *v1.Node, name v1.ResourceName) bool {
 	}
 	capacity, allocatable := node.Status.Capacity[name], node.Status.Allocatable[name]
 	return capacity.Sign() > 0 || allocatable.Sign() > 0
+}
+
+const cycleFlagsKey fwk.StateKey = "betterSchedulerCycleFlags"
+
+type cycleFlags struct {
+	schedulingRetry  bool
+	preemptionDryRun bool
+}
+
+func (f *cycleFlags) Clone() fwk.StateData { copy := *f; return &copy }
+func flagsFromState(state fwk.CycleState) cycleFlags {
+	if state != nil {
+		if data, err := state.Read(cycleFlagsKey); err == nil {
+			if flags, ok := data.(*cycleFlags); ok {
+				return *flags
+			}
+		}
+	}
+	return cycleFlags{}
+}
+
+// IsSchedulingRetry reports whether the bounded RDMA fallback must reuse its snapshot.
+func IsSchedulingRetry(state fwk.CycleState) bool { return flagsFromState(state).schedulingRetry }
+func SetSchedulingRetry(state fwk.CycleState, retry bool) {
+	f := flagsFromState(state)
+	f.schedulingRetry = retry
+	state.Write(cycleFlagsKey, &f)
+}
+
+// IsPreemptionDryRun prevents reservation mutations during speculative victim evaluation.
+func IsPreemptionDryRun(state fwk.CycleState) bool { return flagsFromState(state).preemptionDryRun }
+func SetPreemptionDryRun(state fwk.CycleState, dryRun bool) {
+	f := flagsFromState(state)
+	f.preemptionDryRun = dryRun
+	state.Write(cycleFlagsKey, &f)
 }

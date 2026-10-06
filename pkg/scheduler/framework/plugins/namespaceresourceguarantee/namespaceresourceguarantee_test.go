@@ -20,9 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	featuregatetesting "k8s.io/component-base/featuregate/testing"
-	"k8s.io/kubernetes/pkg/features"
 	"strings"
 	"testing"
 	"time"
@@ -34,14 +31,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	clientgoevents "k8s.io/client-go/tools/events"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/component-base/metrics/testutil"
 	"k8s.io/klog/v2"
 	ktesting "k8s.io/klog/v2/ktesting"
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
+	fwk "k8s.io/kube-scheduler/framework"
 	corevalidation "k8s.io/kubernetes/pkg/apis/core/validation"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/backend/cache"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
@@ -66,7 +67,7 @@ func TestPreFilter(t *testing.T) {
 		pod          *v1.Pod
 		existingPods []*v1.Pod
 		nodes        []*v1.Node
-		wantCode     framework.Code
+		wantCode     fwk.Code
 		wantMessage  string
 	}{
 		{
@@ -88,7 +89,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: framework.Success,
+			wantCode: fwk.Success,
 		},
 		{
 			name: "protected pod exceeding cpu guarantee fails",
@@ -106,7 +107,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantCode:    fwk.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=3000 requested=1500`,
 		},
 		{
@@ -120,7 +121,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceCPU: "100m",
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantCode:    fwk.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
 		},
 		{
@@ -139,7 +140,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceMemory: "4Gi",
 			}),
 			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: framework.Success,
+			wantCode: fwk.Success,
 		},
 		{
 			name: "configured namespace still caps its listed resource",
@@ -161,7 +162,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantCode:    fwk.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-b" shared protected resource guarantee exceeded: resource="cpu" guarantee=1000 current=1000 requested=1000`,
 		},
 		{
@@ -178,7 +179,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceCPU: "100m",
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantCode:    fwk.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
 		},
 		{
@@ -192,7 +193,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceCPU: "8",
 			}),
 			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: framework.Success,
+			wantCode: fwk.Success,
 		},
 		{
 			name: "protected pod requesting non-configured resource bypasses cap accounting",
@@ -205,7 +206,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceName("nvidia.com/gpu"): "8",
 			}),
 			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: framework.Success,
+			wantCode: fwk.Success,
 		},
 		{
 			name: "only same namespace protected pods are counted",
@@ -222,7 +223,7 @@ func TestPreFilter(t *testing.T) {
 				makePodWithRequests("normal", "team-a", "normal", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "8"}),
 			},
 			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: framework.Success,
+			wantCode: fwk.Success,
 		},
 		{
 			name: "protected pod exceeding gpu guarantee fails",
@@ -240,7 +241,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantCode:    fwk.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="nvidia.com/gpu" guarantee=3 current=2 requested=2`,
 		},
 		{
@@ -260,7 +261,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantCode:    fwk.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=5000 requested=3000`,
 		},
 		{
@@ -280,7 +281,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantCode:    fwk.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=5000 requested=3000`,
 		},
 		{
@@ -292,7 +293,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceCPU: "1",
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    framework.UnschedulableAndUnresolvable,
+			wantCode:    fwk.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-b" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=1000`,
 		},
 	}
@@ -303,9 +304,9 @@ func TestPreFilter(t *testing.T) {
 			defer cancel()
 
 			plugin := plugintesting.SetupPlugin(ctx, t, New, &tt.args, internalcache.NewSnapshot(tt.existingPods, tt.nodes)).(*NamespaceResourceGuarantee)
-			_, status := plugin.PreFilter(ctx, framework.NewCycleState(), tt.pod)
+			_, status := plugin.PreFilter(ctx, framework.NewCycleState(), tt.pod, nil)
 			if status == nil {
-				status = framework.NewStatus(framework.Success)
+				status = fwk.NewStatus(fwk.Success)
 			}
 			if status.Code() != tt.wantCode {
 				t.Fatalf("unexpected status code: got %v, want %v", status.Code(), tt.wantCode)
@@ -328,7 +329,7 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 		victimPriority   int32
 		allocatableCPU   string
 		wantVictimNames  []string
-		wantStatusCode   framework.Code
+		wantStatusCode   fwk.Code
 	}
 	tests := []testCase{
 		{
@@ -338,7 +339,7 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 			victimNamespaces: []string{"team-b", "unmanaged"},
 			allocatableCPU:   "2",
 			wantVictimNames:  []string{"victim-0"},
-			wantStatusCode:   framework.Success,
+			wantStatusCode:   fwk.Success,
 		},
 		{
 			name:             "semi-guaranteed preemptor selects only managed namespace victims when restricted",
@@ -347,7 +348,7 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 			victimNamespaces: []string{"team-b", "unmanaged"},
 			allocatableCPU:   "2",
 			wantVictimNames:  []string{"victim-0"},
-			wantStatusCode:   framework.Success,
+			wantStatusCode:   fwk.Success,
 		},
 	}
 
@@ -372,11 +373,11 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 					victimNamespaces: []string{namespace},
 					allocatableCPU:   "1",
 					wantVictimNames:  []string{"victim-0"},
-					wantStatusCode:   framework.Success,
+					wantStatusCode:   fwk.Success,
 				}
 				if namespace == "unmanaged" && restriction.wantRestricted[i] {
 					tt.wantVictimNames = nil
-					tt.wantStatusCode = framework.UnschedulableAndUnresolvable
+					tt.wantStatusCode = fwk.UnschedulableAndUnresolvable
 				}
 				tests = append(tests, tt)
 			}
@@ -392,7 +393,7 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 					victimNamespaces: []string{"team-b"},
 					victimPriority:   priority,
 					allocatableCPU:   "1",
-					wantStatusCode:   framework.UnschedulableAndUnresolvable,
+					wantStatusCode:   fwk.UnschedulableAndUnresolvable,
 				})
 			}
 		}
@@ -490,20 +491,20 @@ func TestPreFilterMetrics(t *testing.T) {
 
 	allowed := makePodWithRequests("allowed", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
 	allowedPlugin := newPlugin(t, internalcache.NewSnapshot(nil, []*v1.Node{makeNode("node-a")}))
-	if _, status := allowedPlugin.PreFilter(ctx, framework.NewCycleState(), allowed); status != nil {
+	if _, status := allowedPlugin.PreFilter(ctx, framework.NewCycleState(), allowed, nil); status != nil {
 		t.Fatalf("expected allowed pod to pass, got %v", status)
 	}
 
 	existing := makePodWithRequests("running", "team-a", "protected", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "3"})
 	exceeded := makePodWithRequests("exceeded", "team-a", "semi", "", map[v1.ResourceName]string{v1.ResourceCPU: "2"})
 	exceededPlugin := newPlugin(t, internalcache.NewSnapshot([]*v1.Pod{existing}, []*v1.Node{makeNode("node-a")}))
-	if _, status := exceededPlugin.PreFilter(ctx, framework.NewCycleState(), exceeded); status == nil || status.Code() != framework.UnschedulableAndUnresolvable {
+	if _, status := exceededPlugin.PreFilter(ctx, framework.NewCycleState(), exceeded, nil); status == nil || status.Code() != fwk.UnschedulableAndUnresolvable {
 		t.Fatalf("expected quota-exceeded status, got %v", status)
 	}
 
 	failed := makePodWithRequests("failed", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
 	failedPlugin := newPlugin(t, errorSharedLister{})
-	if _, status := failedPlugin.PreFilter(ctx, framework.NewCycleState(), failed); status == nil || status.Code() != framework.Error {
+	if _, status := failedPlugin.PreFilter(ctx, framework.NewCycleState(), failed, nil); status == nil || status.Code() != fwk.Error {
 		t.Fatalf("expected error status, got %v", status)
 	}
 
@@ -579,10 +580,10 @@ func TestEventsToRegister(t *testing.T) {
 		events[i].QueueingHintFn = nil
 	}
 
-	expected := []framework.ClusterEventWithHint{
-		{Event: framework.ClusterEvent{Resource: framework.Pod, ActionType: framework.Delete | framework.UpdatePodScaleDown}},
+	expected := []fwk.ClusterEventWithHint{
+		{Event: fwk.ClusterEvent{Resource: fwk.Pod, ActionType: fwk.Delete | fwk.UpdatePodScaleDown}},
 	}
-	if diff := cmp.Diff(expected, events, cmpopts.EquateComparable(framework.ClusterEvent{})); diff != "" {
+	if diff := cmp.Diff(expected, events, cmpopts.EquateComparable(fwk.ClusterEvent{})); diff != "" {
 		t.Fatalf("unexpected events (-want,+got):\n%s", diff)
 	}
 }
@@ -758,7 +759,7 @@ func TestLogPreemptionDecisionEmitsCandidateScoreLogs(t *testing.T) {
 	trace := &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{
 		"node-a": {
 			nodeName:              "node-a",
-			statusCode:            framework.Success,
+			statusCode:            fwk.Success,
 			numPDBViolatingVictim: 1,
 			victims:               []*v1.Pod{victim},
 			packingScore: &preemptionCandidatePackingScore{
@@ -774,7 +775,7 @@ func TestLogPreemptionDecisionEmitsCandidateScoreLogs(t *testing.T) {
 	plugin.preemptionTrace.Store(pod.UID, trace)
 	defer plugin.preemptionTrace.Delete(pod.UID)
 
-	plugin.logPreemptionDecision(tCtx, state, pod, framework.NewPostFilterResultWithNominatedNode("node-a"), framework.NewStatus(framework.Success))
+	plugin.logPreemptionDecision(tCtx, state, pod, framework.NewPostFilterResultWithNominatedNode("node-a"), fwk.NewStatus(fwk.Success))
 
 	output := tCtx.Logger().GetSink().(testktesting.Underlier).GetBuffer().String()
 	wantSubstrings := []string{
@@ -804,7 +805,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 		targetPod    *v1.Pod
 		oldObj       interface{}
 		newObj       interface{}
-		expectedHint framework.QueueingHint
+		expectedHint fwk.QueueingHint
 		expectErr    bool
 	}{
 		{
@@ -815,7 +816,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			oldObj: makePodWithRequests("running", "team-a", "protected", "node-a", map[v1.ResourceName]string{
 				v1.ResourceCPU: "2",
 			}),
-			expectedHint: framework.Queue,
+			expectedHint: fwk.Queue,
 		},
 		{
 			name: "same namespace semi-guaranteed cpu pod deleted",
@@ -825,7 +826,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			oldObj: makePodWithRequests("running", "team-a", "semi", "node-a", map[v1.ResourceName]string{
 				v1.ResourceCPU: "2",
 			}),
-			expectedHint: framework.Queue,
+			expectedHint: fwk.Queue,
 		},
 		{
 			name: "other namespace protected cpu pod deleted",
@@ -835,7 +836,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			oldObj: makePodWithRequests("running", "team-b", "protected", "node-a", map[v1.ResourceName]string{
 				v1.ResourceCPU: "2",
 			}),
-			expectedHint: framework.QueueSkip,
+			expectedHint: fwk.QueueSkip,
 		},
 		{
 			name: "same namespace normal pod deleted",
@@ -845,7 +846,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			oldObj: makePodWithRequests("running", "team-a", "normal", "node-a", map[v1.ResourceName]string{
 				v1.ResourceCPU: "2",
 			}),
-			expectedHint: framework.QueueSkip,
+			expectedHint: fwk.QueueSkip,
 		},
 		{
 			name: "target pod scaled down memory",
@@ -858,7 +859,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			newObj: makePodWithRequestsAndUID("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
 				v1.ResourceMemory: "1Gi",
 			}, "incoming-uid"),
-			expectedHint: framework.Queue,
+			expectedHint: fwk.Queue,
 		},
 		{
 			name: "target pod update with same requests",
@@ -871,13 +872,13 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			newObj: makePodWithRequestsAndUID("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
 				v1.ResourceCPU: "1",
 			}, "incoming-uid"),
-			expectedHint: framework.QueueSkip,
+			expectedHint: fwk.QueueSkip,
 		},
 		{
 			name:         "wrong object type returns error and queues",
 			targetPod:    makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
 			oldObj:       "not-a-pod",
-			expectedHint: framework.Queue,
+			expectedHint: fwk.Queue,
 			expectErr:    true,
 		},
 	}
@@ -967,7 +968,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 		name                string
 		pod                 *v1.Pod
 		result              *framework.PostFilterResult
-		status              *framework.Status
+		status              *fwk.Status
 		trace               *preemptionDecisionTrace
 		wantEventType       string
 		wantReason          string
@@ -978,7 +979,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 			name:          "started event says initiated not completed",
 			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
 			result:        framework.NewPostFilterResultWithNominatedNode("node-a"),
-			status:        framework.NewStatus(framework.Success),
+			status:        fwk.NewStatus(fwk.Success),
 			trace:         traceWithVictims,
 			wantEventType: v1.EventTypeNormal,
 			wantReason:    preemptionStartedReason,
@@ -996,7 +997,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 				p.Status.NominatedNodeName = "node-b"
 				return p
 			}(),
-			status:        framework.NewStatus(framework.Unschedulable, preemptionWaitingOnTerminatingVictims),
+			status:        fwk.NewStatus(fwk.Unschedulable, preemptionWaitingOnTerminatingVictims),
 			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
 			wantEventType: v1.EventTypeNormal,
 			wantReason:    preemptionWaitingReason,
@@ -1010,7 +1011,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 		{
 			name:          "not helpful event is explicit",
 			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
-			status:        framework.NewStatus(framework.Unschedulable, "0/10 nodes are available: 10 Preemption is not helpful for scheduling."),
+			status:        fwk.NewStatus(fwk.Unschedulable, "0/10 nodes are available: 10 Preemption is not helpful for scheduling."),
 			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
 			wantEventType: v1.EventTypeNormal,
 			wantReason:    preemptionNotHelpfulReason,
@@ -1022,7 +1023,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 		{
 			name:          "no candidate event is explicit",
 			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
-			status:        framework.NewStatus(framework.Unschedulable, preemptionNoCandidateMessage),
+			status:        fwk.NewStatus(fwk.Unschedulable, preemptionNoCandidateMessage),
 			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
 			wantEventType: v1.EventTypeNormal,
 			wantReason:    preemptionNoCandidateReason,
@@ -1034,7 +1035,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 		{
 			name:          "error event is warning",
 			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
-			status:        framework.NewStatus(framework.Error, "boom"),
+			status:        fwk.NewStatus(fwk.Error, "boom"),
 			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
 			wantEventType: v1.EventTypeWarning,
 			wantReason:    preemptionErrorReason,
@@ -1084,7 +1085,7 @@ func TestClassifyPreemptionEventSummarizesLongVictimList(t *testing.T) {
 	event := classifyPreemptionEvent(
 		makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
 		framework.NewPostFilterResultWithNominatedNode("node-a"),
-		framework.NewStatus(framework.Success),
+		fwk.NewStatus(fwk.Success),
 		&preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{
 			"node-a": {
 				nodeName: "node-a",
@@ -1127,7 +1128,7 @@ func TestLogPreemptionDecisionEmitsEvent(t *testing.T) {
 	plugin.preemptionTrace.Store(pod.UID, trace)
 	defer plugin.preemptionTrace.Delete(pod.UID)
 
-	plugin.logPreemptionDecision(context.Background(), framework.NewCycleState(), pod, nil, framework.NewStatus(framework.Unschedulable, preemptionWaitingOnTerminatingVictims))
+	plugin.logPreemptionDecision(context.Background(), framework.NewCycleState(), pod, nil, fwk.NewStatus(fwk.Unschedulable, preemptionWaitingOnTerminatingVictims))
 
 	select {
 	case event := <-recorder.Events:
@@ -1163,7 +1164,7 @@ func TestPreFilterDoesNotEmitEvents(t *testing.T) {
 	}
 	pod := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
 
-	_, status := plugin.PreFilter(ctx, framework.NewCycleState(), pod)
+	_, status := plugin.PreFilter(ctx, framework.NewCycleState(), pod, nil)
 	if status != nil && !status.IsSuccess() {
 		t.Fatalf("unexpected status: %v", status)
 	}
@@ -1266,7 +1267,7 @@ func testPostFilterEmitsStartedEventEndToEnd(t *testing.T) {
 	}
 
 	nodeToStatus := framework.NewDefaultNodeToStatus()
-	nodeToStatus.Set("node-a", framework.NewStatus(framework.Unschedulable))
+	nodeToStatus.Set("node-a", fwk.NewStatus(fwk.Unschedulable))
 
 	result, status := plugin.PostFilter(ctx, state, preemptor, nodeToStatus)
 	if !status.IsSuccess() {
@@ -1440,13 +1441,13 @@ func ptrTo[T any](v T) *T {
 
 type noopPodNominator struct{}
 
-func (noopPodNominator) AddNominatedPod(klog.Logger, *framework.PodInfo, *framework.NominatingInfo) {}
+func (noopPodNominator) AddNominatedPod(klog.Logger, fwk.PodInfo, *framework.NominatingInfo) {}
 
 func (noopPodNominator) DeleteNominatedPodIfExists(*v1.Pod) {}
 
-func (noopPodNominator) UpdateNominatedPod(klog.Logger, *v1.Pod, *framework.PodInfo) {}
+func (noopPodNominator) UpdateNominatedPod(klog.Logger, *v1.Pod, fwk.PodInfo) {}
 
-func (noopPodNominator) NominatedPodsForNode(string) []*framework.PodInfo { return nil }
+func (noopPodNominator) NominatedPodsForNode(string) []fwk.PodInfo { return nil }
 
 type errorSharedLister struct{}
 
@@ -1460,19 +1461,19 @@ func (errorSharedLister) StorageInfos() framework.StorageInfoLister {
 
 type errorNodeInfoLister struct{}
 
-func (errorNodeInfoLister) List() ([]*framework.NodeInfo, error) {
+func (errorNodeInfoLister) List() ([]fwk.NodeInfo, error) {
 	return nil, errors.New("snapshot list failed")
 }
 
-func (errorNodeInfoLister) HavePodsWithAffinityList() ([]*framework.NodeInfo, error) {
+func (errorNodeInfoLister) HavePodsWithAffinityList() ([]fwk.NodeInfo, error) {
 	return nil, errors.New("snapshot list failed")
 }
 
-func (errorNodeInfoLister) HavePodsWithRequiredAntiAffinityList() ([]*framework.NodeInfo, error) {
+func (errorNodeInfoLister) HavePodsWithRequiredAntiAffinityList() ([]fwk.NodeInfo, error) {
 	return nil, errors.New("snapshot list failed")
 }
 
-func (errorNodeInfoLister) Get(string) (*framework.NodeInfo, error) {
+func (errorNodeInfoLister) Get(string) (fwk.NodeInfo, error) {
 	return nil, errors.New("snapshot get failed")
 }
 
@@ -1490,7 +1491,7 @@ func TestSyncNominatedNodeReservationLifecycle(t *testing.T) {
 	preemptor := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
 	result := framework.NewPostFilterResultWithNominatedNode("node-a")
 
-	plugin.syncNominatedNodeReservation(context.Background(), preemptor, result, framework.NewStatus(framework.Success))
+	plugin.syncNominatedNodeReservation(context.Background(), preemptor, result, fwk.NewStatus(fwk.Success))
 
 	reservation, ok := nominatednodereservation.SharedStore().Get("node-a")
 	if !ok {
@@ -1513,7 +1514,7 @@ func TestSyncNominatedNodeReservationLifecycle(t *testing.T) {
 		context.Background(),
 		preemptor,
 		nil,
-		framework.NewStatus(framework.Unschedulable, preemptionNoCandidateMessage),
+		fwk.NewStatus(fwk.Unschedulable, preemptionNoCandidateMessage),
 	)
 
 	if _, ok := nominatednodereservation.SharedStore().Get("node-a"); ok {

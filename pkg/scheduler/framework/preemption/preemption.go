@@ -294,12 +294,12 @@ func (ev *Evaluator) Preempt(ctx context.Context, state fwk.CycleState, pod *v1.
 
 // ExecuteCandidate performs the side effects for a previously evaluated candidate.
 // Evaluation must have completed successfully before calling this method.
-func (ev *Evaluator) ExecuteCandidate(ctx context.Context, pod *v1.Pod, bestCandidate Candidate) (*framework.PostFilterResult, *framework.Status) {
+func (ev *Evaluator) ExecuteCandidate(ctx context.Context, pod *v1.Pod, bestCandidate Candidate) (*framework.PostFilterResult, *fwk.Status) {
 	if err := ctx.Err(); err != nil {
-		return nil, framework.AsStatus(err)
+		return nil, fwk.AsStatus(err)
 	}
 	if bestCandidate == nil || bestCandidate.Name() == "" {
-		return nil, framework.NewStatus(framework.Error, "missing preemption candidate")
+		return nil, fwk.NewStatus(fwk.Error, "missing preemption candidate")
 	}
 	logger := klog.FromContext(ctx)
 	logger.V(2).Info("the target node for the preemption is determined", "node", bestCandidate.Name(), "pod", klog.KObj(pod))
@@ -344,7 +344,7 @@ func (ev *Evaluator) findCandidates(ctx context.Context, state fwk.CycleState, a
 
 // EvaluateCandidates exhaustively evaluates an explicit node group and applies
 // preemption extenders. It never clears nominations or prepares a candidate.
-func (ev *Evaluator) EvaluateCandidates(ctx context.Context, state *framework.CycleState, pod *v1.Pod, nodes []*framework.NodeInfo) ([]Candidate, error) {
+func (ev *Evaluator) EvaluateCandidates(ctx context.Context, state fwk.CycleState, pod *v1.Pod, nodes []fwk.NodeInfo) ([]Candidate, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -373,7 +373,7 @@ func (ev *Evaluator) EvaluateCandidates(ctx context.Context, state *framework.Cy
 		if !extender.IsFilter() || extender.SupportsPreemption() || !extender.IsInterested(pod) || len(candidates) == 0 {
 			continue
 		}
-		simulated := make([]*framework.NodeInfo, 0, len(candidates))
+		simulated := make([]fwk.NodeInfo, 0, len(candidates))
 		for _, candidate := range candidates {
 			node, err := ev.Handler.SnapshotSharedLister().NodeInfos().Get(candidate.Name())
 			if err != nil {
@@ -804,7 +804,7 @@ func (ev *Evaluator) DryRunPreemption(ctx context.Context, state fwk.CycleState,
 		logger.V(5).Info("Check the potential node for preemption", "node", nodeInfoCopy.Node().Name)
 
 		stateCopy := state.Clone()
-		stateCopy.IsPreemptionDryRun = true
+		framework.SetPreemptionDryRun(stateCopy, true)
 		pods, numPDBViolations, status := ev.SelectVictimsOnNode(ctx, stateCopy, pod, nodeInfoCopy, pdbs)
 		if status.IsSuccess() && len(pods) != 0 {
 			victims := extenderv1.Victims{
