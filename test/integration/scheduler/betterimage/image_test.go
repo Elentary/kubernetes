@@ -45,6 +45,12 @@ func TestReleasedImage(t *testing.T) {
 	if image == "" {
 		t.Skip("set BETTER_SCHEDULER_TEST_IMAGE to test a built image")
 	}
+	for _, podLevel := range []bool{false, true} {
+		t.Run(fmt.Sprintf("podLevel=%v", podLevel), func(t *testing.T) { testReleasedImage(t, image, podLevel) })
+	}
+}
+
+func testReleasedImage(t *testing.T, image string, podLevel bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, rest, stop := framework.StartTestServer(ctx, t, framework.TestServerSetup{})
@@ -124,6 +130,10 @@ profiles:
 	// The synthetic node has no kubelet; this test verifies binding, not Pod execution.
 	for _, name := range []string{"first", "blocked"} {
 		pod := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "image-smoke"}, Spec: v1.PodSpec{Tolerations: []v1.Toleration{{Key: "node.kubernetes.io/not-ready", Operator: v1.TolerationOpExists, Effect: v1.TaintEffectNoSchedule}}, SchedulerName: "better-scheduler", PriorityClassName: "guaranteed", Containers: []v1.Container{{Name: "test", Image: "registry.k8s.io/pause:3.10", Resources: v1.ResourceRequirements{Requests: v1.ResourceList{v1.ResourceCPU: resource.MustParse("1")}}}}}}
+		if podLevel {
+			pod.Spec.Resources = pod.Spec.Containers[0].Resources.DeepCopy()
+			pod.Spec.Containers[0].Resources = v1.ResourceRequirements{}
+		}
 		if _, err := client.CoreV1().Pods("image-smoke").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 			t.Fatal(err)
 		}
