@@ -155,3 +155,16 @@ production capacity; compare your actual profiles and API-server load on rollout
 
 Validation logs, raw benchmark samples, range-diff and conflict log are retained
 locally in `_output/better-scheduler-validation/1.34.12/`.
+
+## Published release
+
+Published on 2026-10-06 through `hack/release-better-scheduler.sh`:
+
+- Tag: `v1.34.12-bs-v0.1`.
+- Source: `6b0b545ad7b26ce4ef956786f658754710059646` (clean tree).
+- Image: `767397673936.dkr.ecr.us-east-2.amazonaws.com/better-scheduler:v1.34.12-bs-v0.1`.
+- Immutable image: `767397673936.dkr.ecr.us-east-2.amazonaws.com/better-scheduler@sha256:116926bf49384b5a5373d55a3c5c5d5a0befd1f4c2defcbe8cbba95de1b7f9b9`.
+- Platform/toolchain: linux/amd64, Go 1.26.5.
+
+ECR, the annotated Git tag and the release ledger agree on the source/digest.
+Deployment to a live cluster was not performed.
