@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-
 	v1 "k8s.io/api/core/v1"
 	policy "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -45,7 +44,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/ktesting"
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
-	fwk "k8s.io/kube-scheduler/framework"
+	fwkapi "k8s.io/kube-scheduler/framework"
 	apicache "k8s.io/kubernetes/pkg/scheduler/backend/api_cache"
 	apidispatcher "k8s.io/kubernetes/pkg/scheduler/backend/api_dispatcher"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/backend/cache"
@@ -79,8 +78,8 @@ type FakePostFilterPlugin struct {
 }
 
 func (pl *FakePostFilterPlugin) SelectVictimsOnNode(
-	ctx context.Context, state fwk.CycleState, pod *v1.Pod,
-	nodeInfo fwk.NodeInfo, pdbs []*policy.PodDisruptionBudget) (victims []*v1.Pod, numViolatingVictim int, status *fwk.Status) {
+	ctx context.Context, state fwkapi.CycleState, pod *v1.Pod,
+	nodeInfo fwkapi.NodeInfo, pdbs []*policy.PodDisruptionBudget) (victims []*v1.Pod, numViolatingVictim int, status *fwkapi.Status) {
 	return append(victims, nodeInfo.GetPods()[0].GetPod()), pl.numViolatingVictim, nil
 }
 
@@ -92,7 +91,7 @@ func (pl *FakePostFilterPlugin) CandidatesToVictimsMap(candidates []Candidate) m
 	return nil
 }
 
-func (pl *FakePostFilterPlugin) PodEligibleToPreemptOthers(_ context.Context, pod *v1.Pod, nominatedNodeStatus *fwk.Status) (bool, string) {
+func (pl *FakePostFilterPlugin) PodEligibleToPreemptOthers(_ context.Context, pod *v1.Pod, nominatedNodeStatus *fwkapi.Status) (bool, string) {
 	return true, ""
 }
 
@@ -116,8 +115,8 @@ func (f *fakePodActivator) Activate(logger klog.Logger, pods map[string]*v1.Pod)
 type FakePreemptionScorePostFilterPlugin struct{}
 
 func (pl *FakePreemptionScorePostFilterPlugin) SelectVictimsOnNode(
-	ctx context.Context, state fwk.CycleState, pod *v1.Pod,
-	nodeInfo fwk.NodeInfo, pdbs []*policy.PodDisruptionBudget) (victims []*v1.Pod, numViolatingVictim int, status *fwk.Status) {
+	ctx context.Context, state fwkapi.CycleState, pod *v1.Pod,
+	nodeInfo fwkapi.NodeInfo, pdbs []*policy.PodDisruptionBudget) (victims []*v1.Pod, numViolatingVictim int, status *fwkapi.Status) {
 	return append(victims, nodeInfo.GetPods()[0].GetPod()), 1, nil
 }
 
@@ -133,7 +132,7 @@ func (pl *FakePreemptionScorePostFilterPlugin) CandidatesToVictimsMap(candidates
 	return m
 }
 
-func (pl *FakePreemptionScorePostFilterPlugin) PodEligibleToPreemptOthers(_ context.Context, pod *v1.Pod, nominatedNodeStatus *fwk.Status) (bool, string) {
+func (pl *FakePreemptionScorePostFilterPlugin) PodEligibleToPreemptOthers(_ context.Context, pod *v1.Pod, nominatedNodeStatus *fwkapi.Status) (bool, string) {
 	return true, ""
 }
 
@@ -479,7 +478,7 @@ func TestPrepareCandidate(t *testing.T) {
 		expectedDeletionError bool
 		expectedPatchError    bool
 		// Only compared when async preemption is disabled.
-		expectedStatus *fwk.Status
+		expectedStatus *fwkapi.Status
 		// Only compared when async preemption is enabled.
 		expectedPreemptingMap sets.Set[types.UID]
 		expectedActivatedPods map[string]*v1.Pod
@@ -604,7 +603,7 @@ func TestPrepareCandidate(t *testing.T) {
 			testPods:              []*v1.Pod{},
 			expectedDeletionError: true,
 			nodeNames:             []string{node1Name},
-			expectedStatus:        fwk.AsStatus(errDeletePodFailed),
+			expectedStatus:        fwkapi.AsStatus(errDeletePodFailed),
 			expectedPreemptingMap: sets.New(types.UID("preemptor")),
 			expectedActivatedPods: map[string]*v1.Pod{preemptor.Name: preemptor},
 		},
@@ -641,7 +640,7 @@ func TestPrepareCandidate(t *testing.T) {
 			testPods:              []*v1.Pod{},
 			expectedPatchError:    true,
 			nodeNames:             []string{node1Name},
-			expectedStatus:        fwk.AsStatus(errPatchStatusFailed),
+			expectedStatus:        fwkapi.AsStatus(errPatchStatusFailed),
 			expectedPreemptingMap: sets.New(types.UID("preemptor")),
 			expectedActivatedPods: map[string]*v1.Pod{preemptor.Name: preemptor},
 		},
@@ -669,7 +668,7 @@ func TestPrepareCandidate(t *testing.T) {
 				// which results in the second victim not being deleted.
 				"",
 			},
-			expectedStatus:        fwk.AsStatus(errPatchStatusFailed),
+			expectedStatus:        fwkapi.AsStatus(errPatchStatusFailed),
 			expectedPreemptingMap: sets.New(types.UID("preemptor")),
 			expectedActivatedPods: map[string]*v1.Pod{preemptor.Name: preemptor},
 		},
@@ -887,7 +886,7 @@ type fakePodNominator struct {
 	requestStopper chan struct{}
 }
 
-func (f *fakePodNominator) NominatedPodsForNode(nodeName string) []fwk.PodInfo {
+func (f *fakePodNominator) NominatedPodsForNode(nodeName string) []fwkapi.PodInfo {
 	<-f.requestStopper
 	return nil
 }
@@ -956,13 +955,13 @@ func (f *fakeExtender) IsInterested(pod *v1.Pod) bool {
 	return pod != nil
 }
 
-func (f *fakeExtender) Filter(_ *v1.Pod, _ []fwk.NodeInfo) ([]fwk.NodeInfo, extenderv1.FailedNodesMap, extenderv1.FailedNodesMap, error) {
+func (f *fakeExtender) Filter(_ *v1.Pod, _ []fwkapi.NodeInfo) ([]fwkapi.NodeInfo, extenderv1.FailedNodesMap, extenderv1.FailedNodesMap, error) {
 	return nil, nil, nil, nil
 }
 
 func (f *fakeExtender) Prioritize(
 	_ *v1.Pod,
-	_ []fwk.NodeInfo,
+	_ []fwkapi.NodeInfo,
 ) (hostPriorities *extenderv1.HostPriorityList, weight int64, err error) {
 	return nil, 0, nil
 }
@@ -1010,7 +1009,7 @@ func TestCallExtenders(t *testing.T) {
 		name           string
 		extenders      []fwk.Extender
 		candidates     []Candidate
-		wantStatus     *fwk.Status
+		wantStatus     *fwkapi.Status
 		wantCandidates []Candidate
 	}{
 		{
@@ -1035,7 +1034,7 @@ func TestCallExtenders(t *testing.T) {
 				newFakeExtender().WithSupportsPreemption(true).WithReturnNoVictims(true),
 			},
 			candidates:     makeCandidates(node1Name, victim),
-			wantStatus:     fwk.AsStatus(fmt.Errorf("expected at least one victim pod on node %q", node1Name)),
+			wantStatus:     fwkapi.AsStatus(fmt.Errorf("expected at least one victim pod on node %q", node1Name)),
 			wantCandidates: []Candidate{},
 		},
 		{
@@ -1074,7 +1073,7 @@ func TestCallExtenders(t *testing.T) {
 					WithSupportsPreemption(true),
 			},
 			candidates:     makeCandidates(node1Name, victim),
-			wantStatus:     fwk.AsStatus(fmt.Errorf("extender preempt error")),
+			wantStatus:     fwkapi.AsStatus(fmt.Errorf("extender preempt error")),
 			wantCandidates: nil,
 		},
 		{

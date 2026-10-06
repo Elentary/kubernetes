@@ -19,9 +19,6 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	featuregatetesting "k8s.io/component-base/featuregate/testing"
-	"k8s.io/kubernetes/pkg/features"
 	"sort"
 	"strings"
 	"testing"
@@ -34,12 +31,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/events"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/ktesting"
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
+	fwkapi "k8s.io/kube-scheduler/framework"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/backend/cache"
 	internalqueue "k8s.io/kubernetes/pkg/scheduler/backend/queue"
@@ -131,7 +132,7 @@ func startRDMAFixture(t *testing.T, f *rdmaFixture) (*Scheduler, framework.Frame
 			t.Fatal(err)
 		}
 	}
-	cache := internalcache.New(ctx, 0)
+	cache := internalcache.New(ctx, 0, nil)
 	for _, node := range f.nodes {
 		cache.AddNode(logger, node)
 	}
@@ -293,8 +294,8 @@ func RDMAPlacementOrder(t *testing.T) {
 			if diff := cmp.Diff(tt.deleted, waitDeletedPods(t, cs, len(tt.deleted))); diff != "" {
 				t.Errorf("deleted pods (-want,+got): %s", diff)
 			}
-			if state.IsSchedulingRetry != tt.retry {
-				t.Errorf("retry=%v, want %v", state.IsSchedulingRetry, tt.retry)
+			if framework.IsSchedulingRetry(state) != tt.retry {
+				t.Errorf("retry=%v, want %v", framework.IsSchedulingRetry(state), tt.retry)
 			}
 			if tt.host != "" {
 				for _, action := range cs.Actions() {
@@ -409,11 +410,11 @@ func RDMAExhaustiveSearch(t *testing.T) {
 			f.nodes = append(f.nodes, rdmaNode("node2", true))
 			// Every native candidate fits; the extender permits only the last ordinary
 			// node. A 100-node native shortlist must not cause an RDMA fallback.
-			f.extenders = []framework.Extender{&tf.FakeExtender{Predicates: []tf.FitPredicate{func(_ *v1.Pod, node *framework.NodeInfo) *framework.Status {
+			f.extenders = []framework.Extender{&tf.FakeExtender{Predicates: []tf.FitPredicate{func(_ *v1.Pod, node fwkapi.NodeInfo) *fwkapi.Status {
 				if node.Node().Name == "ordinary-219" || node.Node().Name == "node2" {
 					return nil
 				}
-				return framework.NewStatus(framework.Unschedulable, "extender rejects node")
+				return fwkapi.NewStatus(fwkapi.Unschedulable, "extender rejects node")
 			}}}}
 			sched, fwk, cs, ctx := startRDMAFixture(t, f)
 			state := framework.NewCycleState()
@@ -428,7 +429,7 @@ func RDMAExhaustiveSearch(t *testing.T) {
 			} else if !status.IsSuccess() || result.SuggestedHost != "ordinary-219" {
 				t.Fatalf("wrong host: %+v, %v", result, status)
 			}
-			if state.IsSchedulingRetry {
+			if framework.IsSchedulingRetry(state) {
 				t.Fatal("unexpected RDMA fallback")
 			}
 		})
@@ -454,19 +455,19 @@ func TestRDMARetryReusesSnapshot(t *testing.T) {
 	sched.Cache = counter
 	state := framework.NewCycleState()
 	result, status := sched.schedulePodWithPostFilter(ctx, fwk, state, f.pod)
-	if !status.IsSuccess() || result.SuggestedHost != "node2" || !state.IsSchedulingRetry || counter.updates != 1 {
-		t.Fatalf("result=%+v status=%v retry=%v snapshots=%d", result, status, state.IsSchedulingRetry, counter.updates)
+	if !status.IsSuccess() || result.SuggestedHost != "node2" || !framework.IsSchedulingRetry(state) || counter.updates != 1 {
+		t.Fatalf("result=%+v status=%v retry=%v snapshots=%d", result, status, framework.IsSchedulingRetry(state), counter.updates)
 	}
 }
 
 type rdmaRetryFramework struct {
 	framework.Framework
 	result *framework.PostFilterResult
-	status *framework.Status
+	status *fwkapi.Status
 }
 
 func (f *rdmaRetryFramework) HasPostFilterPlugins() bool { return true }
-func (f *rdmaRetryFramework) RunPostFilterPlugins(context.Context, *framework.CycleState, *v1.Pod, framework.NodeToStatusReader) (*framework.PostFilterResult, *framework.Status) {
+func (f *rdmaRetryFramework) RunPostFilterPlugins(context.Context, fwkapi.CycleState, *v1.Pod, framework.NodeToStatusReader) (*framework.PostFilterResult, *fwkapi.Status) {
 	return f.result, f.status
 }
 
@@ -474,7 +475,7 @@ func TestSchedulingRetryBound(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
 		result     *framework.PostFilterResult
-		status     *framework.Status
+		status     *fwkapi.Status
 		secondFits bool
 		calls      int
 		wantError  bool
@@ -482,12 +483,12 @@ func TestSchedulingRetryBound(t *testing.T) {
 		{name: "one retry", result: &framework.PostFilterResult{RetryScheduling: true}, secondFits: true, calls: 2},
 		{name: "repeated retry", result: &framework.PostFilterResult{RetryScheduling: true}, calls: 2, wantError: true},
 		{name: "retry with nomination", result: &framework.PostFilterResult{RetryScheduling: true, NominatingInfo: &framework.NominatingInfo{NominatedNodeName: "node1"}}, calls: 1, wantError: true},
-		{name: "retry with failure", result: &framework.PostFilterResult{RetryScheduling: true}, status: framework.NewStatus(framework.Unschedulable), calls: 1, wantError: true},
+		{name: "retry with failure", result: &framework.PostFilterResult{RetryScheduling: true}, status: fwkapi.NewStatus(fwkapi.Unschedulable), calls: 1, wantError: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pod := rdmaPod("incoming", "", 1000)
 			calls := 0
-			sched := &Scheduler{SchedulePod: func(_ context.Context, _ framework.Framework, state *framework.CycleState, _ *v1.Pod) (ScheduleResult, error) {
+			sched := &Scheduler{SchedulePod: func(_ context.Context, _ framework.Framework, state fwkapi.CycleState, _ *v1.Pod) (ScheduleResult, error) {
 				calls++
 				if calls == 2 && tt.secondFits {
 					return ScheduleResult{SuggestedHost: "node1"}, nil
@@ -496,7 +497,7 @@ func TestSchedulingRetryBound(t *testing.T) {
 			}}
 			fwk := &rdmaRetryFramework{result: tt.result, status: tt.status}
 			_, status := sched.schedulePodWithPostFilter(context.Background(), fwk, framework.NewCycleState(), pod)
-			if calls != tt.calls || (status.Code() == framework.Error) != tt.wantError {
+			if calls != tt.calls || (status.Code() == fwkapi.Error) != tt.wantError {
 				t.Fatalf("calls=%d status=%v", calls, status)
 			}
 		})
@@ -540,8 +541,8 @@ func TestRDMACanceledEvaluationDoesNotEvict(t *testing.T) {
 	extender.cancel = cancel
 	state := framework.NewCycleState()
 	result, status := sched.schedulePodWithPostFilter(ctx, fwk, state, f.pod)
-	if status.IsSuccess() || !strings.Contains(status.Message(), "canceled") || result.nominatingInfo != nil || state.IsSchedulingRetry {
-		t.Fatalf("result=%+v status=%v retry=%v", result, status, state.IsSchedulingRetry)
+	if status.IsSuccess() || !strings.Contains(status.Message(), "canceled") || result.nominatingInfo != nil || framework.IsSchedulingRetry(state) {
+		t.Fatalf("result=%+v status=%v retry=%v", result, status, framework.IsSchedulingRetry(state))
 	}
 	if got := deletedPods(cs); len(got) != 0 {
 		t.Fatalf("evicted after cancellation: %v", got)
@@ -558,5 +559,29 @@ func waitDeletedPods(t *testing.T, cs *clientsetfake.Clientset, count int) []str
 			return got
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// Extracting PostFilter for RDMA retry must preserve the upstream policy for
+// nomination after failures, including the alpha external-nomination mode.
+func TestRDMAFailureNominationPolicy(t *testing.T) {
+	for _, retain := range []bool{false, true} {
+		for _, failure := range []error{ErrNoNodesAvailable, fmt.Errorf("snapshot failure")} {
+			sched := &Scheduler{nominatedNodeNameForExpectationEnabled: retain}
+			sched.SchedulePod = func(context.Context, framework.Framework, fwkapi.CycleState, *v1.Pod) (ScheduleResult, error) {
+				return ScheduleResult{}, failure
+			}
+			result, status := sched.schedulePodWithPostFilter(context.Background(), nil, framework.NewCycleState(), &v1.Pod{})
+			if status.IsSuccess() {
+				t.Fatal("expected failure")
+			}
+			if retain {
+				if result.nominatingInfo != nil {
+					t.Fatalf("cleared external nomination: %+v", result.nominatingInfo)
+				}
+			} else if result.nominatingInfo == nil || result.nominatingInfo.NominatingMode != framework.ModeOverride || result.nominatingInfo.NominatedNodeName != "" {
+				t.Fatalf("expected legacy nomination clearing: %+v", result.nominatingInfo)
+			}
+		}
 	}
 }

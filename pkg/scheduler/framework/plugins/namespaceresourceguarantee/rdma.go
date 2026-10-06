@@ -23,15 +23,16 @@ import (
 	v1 "k8s.io/api/core/v1"
 	corev1helpers "k8s.io/component-helpers/scheduling/corev1"
 	"k8s.io/klog/v2"
+	fwk "k8s.io/kube-scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/preemption"
 )
 
 const (
-	rdmaResource       v1.ResourceName    = "nvidia.com/rdma_shared_device_a"
-	rdmaCycleKey       framework.StateKey = "NamespaceResourceGuarantee/RDMA"
-	rdmaDeferredReason                    = "RDMA node deferred until ordinary placements are exhausted"
+	rdmaResource       v1.ResourceName = "nvidia.com/rdma_shared_device_a"
+	rdmaCycleKey       fwk.StateKey    = "NamespaceResourceGuarantee/RDMA"
+	rdmaDeferredReason                 = "RDMA node deferred until ordinary placements are exhausted"
 )
 
 var _ framework.FilterPlugin = &NamespaceResourceGuarantee{}
@@ -44,12 +45,12 @@ type rdmaCycleState struct {
 	trace    *preemptionDecisionTrace
 }
 
-func (s *rdmaCycleState) Clone() framework.StateData {
+func (s *rdmaCycleState) Clone() fwk.StateData {
 	copy := *s
 	return &copy
 }
 
-func rdmaStateFromCycle(state *framework.CycleState) *rdmaCycleState {
+func rdmaStateFromCycle(state fwk.CycleState) *rdmaCycleState {
 	data, err := state.Read(rdmaCycleKey)
 	if err != nil {
 		return nil
@@ -65,7 +66,7 @@ func (pl *NamespaceResourceGuarantee) prefersNonRDMA(pod *v1.Pod) bool {
 
 // PreFilter enforces the quota before enabling the placement preference. A retry
 // retains the phase and evaluated candidates; a new scheduling cycle starts fresh.
-func (pl *NamespaceResourceGuarantee) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
+func (pl *NamespaceResourceGuarantee) PreFilter(ctx context.Context, state fwk.CycleState, pod *v1.Pod, _ []fwk.NodeInfo) (*framework.PreFilterResult, *fwk.Status) {
 	result, status := pl.preFilterQuota(ctx, state, pod)
 	if status.IsSuccess() && pl.prefersNonRDMA(pod) && framework.NodeResourcePreferenceFromState(state) == nil {
 		framework.WriteNodeResourcePreference(state, &framework.NodeResourcePreference{Resource: rdmaResource})
@@ -74,10 +75,10 @@ func (pl *NamespaceResourceGuarantee) PreFilter(ctx context.Context, state *fram
 	return result, status
 }
 
-func (pl *NamespaceResourceGuarantee) Filter(_ context.Context, state *framework.CycleState, _ *v1.Pod, node *framework.NodeInfo) *framework.Status {
+func (pl *NamespaceResourceGuarantee) Filter(_ context.Context, state fwk.CycleState, _ *v1.Pod, node fwk.NodeInfo) *fwk.Status {
 	preference := framework.NodeResourcePreferenceFromState(state)
 	if pl.args.PreferNonRDMANodesForGuaranteedGPU && preference != nil && !preference.AllowFallback && framework.NodeHasResource(node.Node(), preference.Resource) {
-		return framework.NewStatus(framework.UnschedulableAndUnresolvable, rdmaDeferredReason)
+		return fwk.NewStatus(fwk.UnschedulableAndUnresolvable, rdmaDeferredReason)
 	}
 	return nil
 }
@@ -110,28 +111,28 @@ func (pl *NamespaceResourceGuarantee) ValidatePluginConfiguration(plugins *confi
 	return nil
 }
 
-func (pl *NamespaceResourceGuarantee) postFilterRDMA(ctx context.Context, state *framework.CycleState, pod *v1.Pod, statuses framework.NodeToStatusReader) (*framework.PostFilterResult, *framework.Status) {
+func (pl *NamespaceResourceGuarantee) postFilterRDMA(ctx context.Context, state fwk.CycleState, pod *v1.Pod, statuses framework.NodeToStatusReader) (*framework.PostFilterResult, *fwk.Status) {
 	preference := framework.NodeResourcePreferenceFromState(state)
 	cycle := rdmaStateFromCycle(state)
 	if cycle == nil {
-		return nil, framework.NewStatus(framework.Error, "missing RDMA cycle state")
+		return nil, fwk.NewStatus(fwk.Error, "missing RDMA cycle state")
 	}
 	current, err := pl.evaluator.PodLister.Pods(pod.Namespace).Get(pod.Name)
 	if err != nil {
-		return nil, framework.AsStatus(err)
+		return nil, fwk.AsStatus(err)
 	}
 	if current.UID != pod.UID || !pl.prefersNonRDMA(current) {
-		return nil, framework.NewStatus(framework.Error, "preemptor changed during placement evaluation")
+		return nil, fwk.NewStatus(fwk.Error, "preemptor changed during placement evaluation")
 	}
 	pod = current
 	never := pod.Spec.PreemptionPolicy != nil && *pod.Spec.PreemptionPolicy == v1.PreemptNever
 	if !never && pod.Status.NominatedNodeName != "" {
 		ready, waiting, err := pl.nominatedPlacement(ctx, state, pod)
 		if err != nil {
-			return nil, framework.AsStatus(err)
+			return nil, fwk.AsStatus(err)
 		}
 		if waiting || (ready && preference.AllowFallback) {
-			return nil, framework.NewStatus(framework.Unschedulable, preemptionWaitingOnTerminatingVictims)
+			return nil, fwk.NewStatus(fwk.Unschedulable, preemptionWaitingOnTerminatingVictims)
 		}
 		if ready {
 			return pl.allowRDMA(ctx, state, pod, "finish_existing_nomination")
@@ -141,14 +142,14 @@ func (pl *NamespaceResourceGuarantee) postFilterRDMA(ctx context.Context, state 
 		if !preference.AllowFallback {
 			return pl.allowRDMA(ctx, state, pod, "preemption_disabled")
 		}
-		return framework.NewPostFilterResultWithNominatedNode(""), framework.NewStatus(framework.Unschedulable, "not eligible due to preemptionPolicy=Never.")
+		return framework.NewPostFilterResultWithNominatedNode(""), fwk.NewStatus(fwk.Unschedulable, "not eligible due to preemptionPolicy=Never.")
 	}
 
-	potential, err := statuses.NodesForStatusCode(pl.handle.SnapshotSharedLister().NodeInfos(), framework.Unschedulable)
+	potential, err := statuses.NodesForStatusCode(pl.handle.SnapshotSharedLister().NodeInfos(), fwk.Unschedulable)
 	if err != nil {
-		return nil, framework.AsStatus(err)
+		return nil, fwk.AsStatus(err)
 	}
-	nodes := make([]*framework.NodeInfo, 0, len(potential))
+	nodes := make([]fwk.NodeInfo, 0, len(potential))
 	for _, node := range potential {
 		// First evaluate ordinary nodes; the fallback evaluates only RDMA nodes.
 		if framework.NodeHasResource(node.Node(), rdmaResource) == preference.AllowFallback {
@@ -157,14 +158,14 @@ func (pl *NamespaceResourceGuarantee) postFilterRDMA(ctx context.Context, state 
 	}
 	candidates, err := pl.evaluator.EvaluateCandidates(ctx, state, pod, nodes)
 	if err != nil {
-		return nil, framework.AsStatus(err)
+		return nil, fwk.AsStatus(err)
 	}
 	// Extenders may add victims. They must respect the same priority and
 	// managed-namespace eligibility as the native victim selector.
 	for _, candidate := range candidates {
 		for _, victim := range candidate.Victims().Pods {
 			if corev1helpers.PodPriority(victim) >= corev1helpers.PodPriority(pod) || !pl.isEligiblePreemptionVictim(pod, victim) {
-				return nil, framework.NewStatus(framework.Error, "extender returned an ineligible preemption victim")
+				return nil, fwk.NewStatus(fwk.Error, "extender returned an ineligible preemption victim")
 			}
 		}
 	}
@@ -189,7 +190,7 @@ func (pl *NamespaceResourceGuarantee) postFilterRDMA(ctx context.Context, state 
 	}
 	candidate := pl.evaluator.SelectCandidate(ctx, pod, candidates)
 	if candidate == nil {
-		return framework.NewPostFilterResultWithNominatedNode(""), framework.NewStatus(framework.Unschedulable, preemptionNoCandidateMessage)
+		return framework.NewPostFilterResultWithNominatedNode(""), fwk.NewStatus(fwk.Unschedulable, preemptionNoCandidateMessage)
 	}
 	if pl.profile == decisionLogProfile {
 		klog.FromContext(ctx).Info("Selected placement preemption candidate", "profile", pl.profile, "pod", klog.KObj(pod), "decisionID", pod.UID,
@@ -206,7 +207,7 @@ func placementPhase(preference *framework.NodeResourcePreference) string {
 	return "preferred"
 }
 
-func (pl *NamespaceResourceGuarantee) allowRDMA(ctx context.Context, state *framework.CycleState, pod *v1.Pod, reason string) (*framework.PostFilterResult, *framework.Status) {
+func (pl *NamespaceResourceGuarantee) allowRDMA(ctx context.Context, state fwk.CycleState, pod *v1.Pod, reason string) (*framework.PostFilterResult, *fwk.Status) {
 	framework.NodeResourcePreferenceFromState(state).AllowFallback = true
 	if pl.profile == decisionLogProfile {
 		klog.FromContext(ctx).Info("Allowing RDMA placement fallback", "profile", pl.profile, "pod", klog.KObj(pod), "decisionID", pod.UID,
@@ -218,7 +219,7 @@ func (pl *NamespaceResourceGuarantee) allowRDMA(ctx context.Context, state *fram
 // nominatedPlacement recognizes only a placement that fits now or will fit once
 // its already-preempted victims terminate. A changed hard constraint or a missing
 // node invalidates the nomination instead of keeping the pod waiting indefinitely.
-func (pl *NamespaceResourceGuarantee) nominatedPlacement(ctx context.Context, state *framework.CycleState, pod *v1.Pod) (bool, bool, error) {
+func (pl *NamespaceResourceGuarantee) nominatedPlacement(ctx context.Context, state fwk.CycleState, pod *v1.Pod) (bool, bool, error) {
 	preference := framework.NodeResourcePreferenceFromState(state)
 	if preference.NodeNames != nil && !preference.NodeNames.Has(pod.Status.NominatedNodeName) {
 		return false, false, nil
@@ -227,7 +228,7 @@ func (pl *NamespaceResourceGuarantee) nominatedPlacement(ctx context.Context, st
 	if err != nil {
 		return false, false, err
 	}
-	var node *framework.NodeInfo
+	var node fwk.NodeInfo
 	for _, candidate := range nodes {
 		if candidate.Node().Name == pod.Status.NominatedNodeName {
 			node = candidate.Snapshot()
@@ -238,17 +239,17 @@ func (pl *NamespaceResourceGuarantee) nominatedPlacement(ctx context.Context, st
 		return false, false, nil
 	}
 	probe := state.Clone()
-	probe.IsPreemptionDryRun = true
+	framework.SetPreemptionDryRun(probe, true)
 	framework.NodeResourcePreferenceFromState(probe).AllowFallback = true
 	fits := func() (bool, error) {
 		status := pl.handle.RunFilterPluginsWithNominatedPods(ctx, probe, pod, node)
-		if status.Code() == framework.Error {
+		if status.Code() == fwk.Error {
 			return false, status.AsError()
 		}
 		if !status.IsSuccess() {
 			return false, nil
 		}
-		nodes := []*framework.NodeInfo{node}
+		nodes := []fwk.NodeInfo{node}
 		for _, extender := range pl.handle.Extenders() {
 			if !extender.IsInterested(pod) {
 				continue
@@ -271,11 +272,11 @@ func (pl *NamespaceResourceGuarantee) nominatedPlacement(ctx context.Context, st
 		return ready, false, err
 	}
 	removed := false
-	for _, victim := range append([]*framework.PodInfo(nil), node.Pods...) {
-		if corev1helpers.PodPriority(victim.Pod) >= corev1helpers.PodPriority(pod) || !podTerminatingByPreemption(victim.Pod) {
+	for _, victim := range append([]fwk.PodInfo(nil), node.GetPods()...) {
+		if corev1helpers.PodPriority(victim.GetPod()) >= corev1helpers.PodPriority(pod) || !podTerminatingByPreemption(victim.GetPod()) {
 			continue
 		}
-		if err := node.RemovePod(klog.FromContext(ctx), victim.Pod); err != nil {
+		if err := node.RemovePod(klog.FromContext(ctx), victim.GetPod()); err != nil {
 			return false, false, err
 		}
 		if status := pl.handle.RunPreFilterExtensionRemovePod(ctx, probe, pod, victim, node); !status.IsSuccess() {

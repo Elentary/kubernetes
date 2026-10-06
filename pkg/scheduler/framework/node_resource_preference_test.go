@@ -17,9 +17,10 @@ limitations under the License.
 package framework
 
 import (
+	"testing"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"testing"
 )
 
 func TestNodeResourcePreference(t *testing.T) {
@@ -45,12 +46,12 @@ func TestNodeResourcePreference(t *testing.T) {
 		})
 	}
 	state := NewCycleState()
-	state.IsSchedulingRetry = true
+	SetSchedulingRetry(state, true)
 	WriteNodeResourcePreference(state, &NodeResourcePreference{Resource: rdma})
 	clone := state.Clone()
-	clone.IsPreemptionDryRun = true
+	SetPreemptionDryRun(clone, true)
 	NodeResourcePreferenceFromState(clone).AllowFallback = true
-	if !clone.IsSchedulingRetry || state.IsPreemptionDryRun || NodeResourcePreferenceFromState(state).AllowFallback {
+	if !IsSchedulingRetry(clone) || IsPreemptionDryRun(state) || NodeResourcePreferenceFromState(state).AllowFallback {
 		t.Fatal("cloning must preserve retry state and isolate speculative changes")
 	}
 }

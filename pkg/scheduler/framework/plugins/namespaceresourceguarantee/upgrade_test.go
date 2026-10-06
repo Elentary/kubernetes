@@ -25,9 +25,12 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/klog/v2"
+	fwk "k8s.io/kube-scheduler/framework"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
+	internalcache "k8s.io/kubernetes/pkg/scheduler/backend/cache"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
+	plugintesting "k8s.io/kubernetes/pkg/scheduler/framework/plugins/testing"
 )
 
 // Quota accounting and queue hints must use effective, not only desired, requests
@@ -49,7 +52,7 @@ func TestResizeAccountingAndQueueHint(t *testing.T) {
 	}
 	unchanged := old.DeepCopy()
 	unchanged.Spec.Containers[0].Resources.Requests[v1.ResourceCPU] = resource.MustParse("500m")
-	if hint, err := pl.isSchedulableAfterPodChange(klog.Background(), pending, old, unchanged); err != nil || hint != framework.QueueSkip {
+	if hint, err := pl.isSchedulableAfterPodChange(klog.Background(), pending, old, unchanged); err != nil || hint != fwk.QueueSkip {
 		t.Fatalf("premature requeue: %v %v", hint, err)
 	}
 	completed := old.DeepCopy()
@@ -58,12 +61,12 @@ func TestResizeAccountingAndQueueHint(t *testing.T) {
 	if got := pl.resourceRequest(completed, v1.ResourceCPU); got != 1000 {
 		t.Fatalf("completed usage=%d, want 1000", got)
 	}
-	if hint, err := pl.isSchedulableAfterPodChange(klog.Background(), pending, old, completed); err != nil || hint != framework.Queue {
+	if hint, err := pl.isSchedulableAfterPodChange(klog.Background(), pending, old, completed); err != nil || hint != fwk.Queue {
 		t.Fatalf("missing status-only requeue: %v %v", hint, err)
 	}
 	foundScaleDown := false
 	for _, event := range framework.PodSchedulingPropertiesChange(completed, old) {
-		if event.ActionType&framework.UpdatePodScaleDown != 0 {
+		if event.ActionType&fwk.UpdatePodScaleDown != 0 {
 			foundScaleDown = true
 		}
 	}
@@ -89,5 +92,27 @@ func TestScoreUsesSuppliedNodeInfo(t *testing.T) {
 	score, status := pl.Score(context.Background(), framework.NewCycleState(), incoming, node)
 	if !status.IsSuccess() || score != 50 {
 		t.Fatalf("score=%d status=%v, want 50", score, status)
+	}
+}
+
+// In 1.34 PodLevelResources is enabled by default. Both incoming requests and
+// bound usage must include spec.resources, including pods with empty containers' requests.
+func TestPodLevelQuotaAccounting(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.PodLevelResources, true)
+	existing := makePodWithRequests("existing", "team-a", "protected", "node-a", nil)
+	existing.Spec.Resources = &v1.ResourceRequirements{Requests: v1.ResourceList{v1.ResourceCPU: resource.MustParse("2")}}
+	incoming := makePodWithRequests("incoming", "team-a", "protected", "", nil)
+	incoming.Spec.Resources = &v1.ResourceRequirements{Requests: v1.ResourceList{v1.ResourceCPU: resource.MustParse("2")}}
+	ctx := context.Background()
+	pl := plugintesting.SetupPlugin(ctx, t, New, &config.NamespaceResourceGuaranteeArgs{
+		ProtectedPriorityClassName: "protected",
+		NamespaceGuarantees:        map[string]v1.ResourceList{"team-a": {v1.ResourceCPU: resource.MustParse("3")}},
+	}, internalcache.NewSnapshot([]*v1.Pod{existing}, []*v1.Node{makeNode("node-a")})).(*NamespaceResourceGuarantee)
+	if _, status := pl.PreFilter(ctx, framework.NewCycleState(), incoming, nil); status.Code() != fwk.UnschedulableAndUnresolvable {
+		t.Fatalf("pod-level request must exceed shared guarantee: %v", status)
+	}
+	incoming.Spec.Resources.Requests[v1.ResourceCPU] = resource.MustParse("1")
+	if _, status := pl.PreFilter(ctx, framework.NewCycleState(), incoming, nil); !status.IsSuccess() {
+		t.Fatalf("pod-level request at guarantee must fit: %v", status)
 	}
 }
