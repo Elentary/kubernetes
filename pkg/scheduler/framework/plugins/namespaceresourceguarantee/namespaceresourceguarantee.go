@@ -310,15 +310,10 @@ func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state *fra
 
 // Score favors nodes that already have protected GPU usage, which helps pack
 // protected GPU pods onto fewer nodes and reduces fragmentation.
-func (pl *NamespaceResourceGuarantee) Score(ctx context.Context, _ *framework.CycleState, pod *v1.Pod, nodeName string) (int64, *framework.Status) {
+func (pl *NamespaceResourceGuarantee) Score(ctx context.Context, _ *framework.CycleState, pod *v1.Pod, nodeInfo *framework.NodeInfo) (int64, *framework.Status) {
 	incomingGPU := pl.scoredProtectedGPURequest(pod)
 	if incomingGPU == 0 {
 		return 0, nil
-	}
-
-	nodeInfo, err := pl.handle.SnapshotSharedLister().NodeInfos().Get(nodeName)
-	if err != nil {
-		return 0, framework.AsStatus(err)
 	}
 
 	allocatableGPU := nodeAllocatableForResource(nodeInfo, protectedGPUResource)
