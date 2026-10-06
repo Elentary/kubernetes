@@ -129,7 +129,7 @@ profiles:
 Key points:
 
 - `NominatedNodeReservation` must be in `filter` + `postBind` of **both** profiles. If only the better-scheduler profile has it, default-profile pods will steal reserved nodes.
-- `DefaultPreemption` is disabled only in `postFilter` of the better-scheduler profile. (Disabling it in `preEnqueue` is harmless but unnecessary — DefaultPreemption is not a PreEnqueue plugin in this fork's baseline; the plugin's own PreEnqueue handles async-preemption gating.)
+- `DefaultPreemption` is disabled in `postFilter` of the better-scheduler profile. In Kubernetes 1.33 it also implements `PreEnqueue`; its idle evaluator does not gate custom preemption. Keep `NamespaceResourceGuarantee` enabled in `preEnqueue` so its own evaluator gates async preemption (now enabled by default).
 - Neither custom plugin is in any default plugin set — forgetting to enable one is silent.
 - Decision logs (see [observability.md](observability.md)) key off the profile name: only the profile literally named `better-scheduler` emits them (`detailedScoreLoggingProfile` in `pkg/scheduler/schedule_one.go`).
 

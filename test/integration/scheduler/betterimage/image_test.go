@@ -39,7 +39,7 @@ import (
 func TestMain(m *testing.M) { framework.EtcdMain(m.Run) }
 
 // Run explicitly with BETTER_SCHEDULER_TEST_IMAGE. The Docker daemon must share
-// the host network and filesystem with the test runner. No live cluster is used.
+// the host network with the test runner. No live cluster is used.
 func TestReleasedImage(t *testing.T) {
 	image := os.Getenv("BETTER_SCHEDULER_TEST_IMAGE")
 	if image == "" {
@@ -89,7 +89,7 @@ profiles:
 		t.Fatal(err)
 	}
 	name := fmt.Sprintf("better-scheduler-smoke-%d", time.Now().UnixNano())
-	out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--name", name, "--network=host", "-v", dir+":/test:ro", image, "--config=/test/scheduler.yaml", "--secure-port=0").CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", "create", "--name", name, "--network=host", "--entrypoint=/usr/local/bin/kube-scheduler", image, "--config=/test/scheduler.yaml", "--secure-port=0").CombinedOutput()
 	if err != nil {
 		t.Fatalf("start image: %s: %v", out, err)
 	}
@@ -102,6 +102,12 @@ profiles:
 			t.Errorf("remove image test container: %s: %v", out, err)
 		}
 	}()
+	if out, err := exec.CommandContext(ctx, "docker", "cp", dir+"/.", name+":/test").CombinedOutput(); err != nil {
+		t.Fatalf("copy config: %s: %v", out, err)
+	}
+	if out, err := exec.CommandContext(ctx, "docker", "start", name).CombinedOutput(); err != nil {
+		t.Fatalf("start: %s: %v", out, err)
+	}
 	if _, err := client.CoreV1().Namespaces().Create(ctx, &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "image-smoke"}}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +118,12 @@ profiles:
 	if _, err := client.CoreV1().Nodes().Create(ctx, node, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := client.CoreV1().ServiceAccounts("image-smoke").Create(ctx, &v1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "default"}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// The synthetic node has no kubelet; this test verifies binding, not Pod execution.
 	for _, name := range []string{"first", "blocked"} {
-		pod := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "image-smoke"}, Spec: v1.PodSpec{SchedulerName: "better-scheduler", PriorityClassName: "guaranteed", Containers: []v1.Container{{Name: "test", Image: "registry.k8s.io/pause:3.10", Resources: v1.ResourceRequirements{Requests: v1.ResourceList{v1.ResourceCPU: resource.MustParse("1")}}}}}}
+		pod := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "image-smoke"}, Spec: v1.PodSpec{Tolerations: []v1.Toleration{{Key: "node.kubernetes.io/not-ready", Operator: v1.TolerationOpExists, Effect: v1.TaintEffectNoSchedule}}, SchedulerName: "better-scheduler", PriorityClassName: "guaranteed", Containers: []v1.Container{{Name: "test", Image: "registry.k8s.io/pause:3.10", Resources: v1.ResourceRequirements{Requests: v1.ResourceList{v1.ResourceCPU: resource.MustParse("1")}}}}}}
 		if _, err := client.CoreV1().Pods("image-smoke").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 			t.Fatal(err)
 		}
