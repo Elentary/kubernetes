@@ -18,6 +18,7 @@ package namespaceresourceguarantee
 
 import (
 	"context"
+	fwkapi "k8s.io/kube-scheduler/framework"
 	"strings"
 	"testing"
 
@@ -27,7 +28,6 @@ import (
 	"k8s.io/client-go/informers"
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
-	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/defaultbinder"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/defaultpreemption"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/feature"
@@ -115,7 +115,7 @@ func TestRDMAProfileValidation(t *testing.T) {
 			args.PreferNonRDMANodesForGuaranteedGPU = !tt.disabled
 			register := []tf.RegisterPluginFunc{
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New), tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
-				tf.RegisterPluginAsExtensions(Name, func(ctx context.Context, _ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
+				tf.RegisterPluginAsExtensions(Name, func(ctx context.Context, _ runtime.Object, handle fwkapi.Handle) (fwkapi.Plugin, error) {
 					return New(ctx, &args, handle)
 				}, tt.extensions...),
 			}
@@ -145,7 +145,7 @@ func TestRDMAMultiPointValidation(t *testing.T) {
 		args.PreferNonRDMANodesForGuaranteedGPU = true
 		register := []tf.RegisterPluginFunc{
 			tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New), tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
-			tf.RegisterPluginAsExtensions(Name, func(ctx context.Context, _ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
+			tf.RegisterPluginAsExtensions(Name, func(ctx context.Context, _ runtime.Object, handle fwkapi.Handle) (fwkapi.Plugin, error) {
 				return New(ctx, &args, handle)
 			}),
 			func(_ *frameworkruntime.Registry, profile *config.KubeSchedulerProfile) {

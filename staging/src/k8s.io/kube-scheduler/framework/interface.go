@@ -361,6 +361,10 @@ func (p *PreFilterResult) Merge(in *PreFilterResult) *PreFilterResult {
 
 // PostFilterResult wraps needed info for scheduler framework to act upon PostFilter phase.
 type PostFilterResult struct {
+	// RetryScheduling requests one immediate retry on the same snapshot after
+	// a custom PostFilter changes the placement phase. It must not accompany
+	// a nomination or an unsuccessful status; the scheduler bounds it to one retry.
+	RetryScheduling bool
 	*NominatingInfo
 }
 

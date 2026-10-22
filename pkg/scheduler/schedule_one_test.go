@@ -120,7 +120,7 @@ func (f *fakeExtender) IsIgnorable() bool {
 func (f *fakeExtender) ProcessPreemption(
 	_ *v1.Pod,
 	_ map[string]*extenderv1.Victims,
-	_ fwk.NodeInfoLister,
+	_ fwkapi.NodeInfoLister,
 ) (map[string]*extenderv1.Victims, error) {
 	return nil, nil
 }
@@ -170,7 +170,7 @@ func (f *fakeExtender) IsFilter() bool {
 type falseMapPlugin struct{}
 
 func newFalseMapPlugin() frameworkruntime.PluginFactory {
-	return func(_ context.Context, _ runtime.Object, _ fwk.Handle) (fwk.Plugin, error) {
+	return func(_ context.Context, _ runtime.Object, _ fwkapi.Handle) (fwkapi.Plugin, error) {
 		return &falseMapPlugin{}, nil
 	}
 }
@@ -183,14 +183,14 @@ func (pl *falseMapPlugin) Score(_ context.Context, _ fwkapi.CycleState, _ *v1.Po
 	return 0, fwkapi.AsStatus(errPrioritize)
 }
 
-func (pl *falseMapPlugin) ScoreExtensions() fwk.ScoreExtensions {
+func (pl *falseMapPlugin) ScoreExtensions() fwkapi.ScoreExtensions {
 	return nil
 }
 
 type numericMapPlugin struct{}
 
 func newNumericMapPlugin() frameworkruntime.PluginFactory {
-	return func(_ context.Context, _ runtime.Object, _ fwk.Handle) (fwk.Plugin, error) {
+	return func(_ context.Context, _ runtime.Object, _ fwkapi.Handle) (fwkapi.Plugin, error) {
 		return &numericMapPlugin{}, nil
 	}
 }
@@ -208,12 +208,12 @@ func (pl *numericMapPlugin) Score(_ context.Context, _ fwkapi.CycleState, _ *v1.
 	return int64(score), nil
 }
 
-func (pl *numericMapPlugin) ScoreExtensions() fwk.ScoreExtensions {
+func (pl *numericMapPlugin) ScoreExtensions() fwkapi.ScoreExtensions {
 	return nil
 }
 
 // NewNoPodsFilterPlugin initializes a noPodsFilterPlugin and returns it.
-func NewNoPodsFilterPlugin(_ context.Context, _ runtime.Object, _ fwk.Handle) (fwk.Plugin, error) {
+func NewNoPodsFilterPlugin(_ context.Context, _ runtime.Object, _ fwkapi.Handle) (fwkapi.Plugin, error) {
 	return &noPodsFilterPlugin{}, nil
 }
 
@@ -232,7 +232,7 @@ func (pl *reverseNumericMapPlugin) Score(_ context.Context, _ fwkapi.CycleState,
 	return int64(score), nil
 }
 
-func (pl *reverseNumericMapPlugin) ScoreExtensions() fwk.ScoreExtensions {
+func (pl *reverseNumericMapPlugin) ScoreExtensions() fwkapi.ScoreExtensions {
 	return pl
 }
 
@@ -245,7 +245,7 @@ func (pl *reverseNumericMapPlugin) NormalizeScore(_ context.Context, _ fwkapi.Cy
 		minScore = math.Min(minScore, float64(hostPriority.Score))
 	}
 	for i, hostPriority := range nodeScores {
-		nodeScores[i] = fwk.NodeScore{
+		nodeScores[i] = fwkapi.NodeScore{
 			Name:  hostPriority.Name,
 			Score: int64(maxScore + minScore - float64(hostPriority.Score)),
 		}
@@ -254,7 +254,7 @@ func (pl *reverseNumericMapPlugin) NormalizeScore(_ context.Context, _ fwkapi.Cy
 }
 
 func newReverseNumericMapPlugin() frameworkruntime.PluginFactory {
-	return func(_ context.Context, _ runtime.Object, _ fwk.Handle) (fwk.Plugin, error) {
+	return func(_ context.Context, _ runtime.Object, _ fwkapi.Handle) (fwkapi.Plugin, error) {
 		return &reverseNumericMapPlugin{}, nil
 	}
 }
@@ -269,7 +269,7 @@ func (pl *trueMapPlugin) Score(_ context.Context, _ fwkapi.CycleState, _ *v1.Pod
 	return 1, nil
 }
 
-func (pl *trueMapPlugin) ScoreExtensions() fwk.ScoreExtensions {
+func (pl *trueMapPlugin) ScoreExtensions() fwkapi.ScoreExtensions {
 	return pl
 }
 
@@ -283,7 +283,7 @@ func (pl *trueMapPlugin) NormalizeScore(_ context.Context, _ fwkapi.CycleState, 
 }
 
 func newTrueMapPlugin() frameworkruntime.PluginFactory {
-	return func(_ context.Context, _ runtime.Object, _ fwk.Handle) (fwk.Plugin, error) {
+	return func(_ context.Context, _ runtime.Object, _ fwkapi.Handle) (fwkapi.Plugin, error) {
 		return &trueMapPlugin{}, nil
 	}
 }
@@ -322,7 +322,7 @@ func (s *fakeNodeSelector) Filter(_ context.Context, _ fwkapi.CycleState, _ *v1.
 	return nil
 }
 
-func newFakeNodeSelector(_ context.Context, args runtime.Object, _ fwk.Handle) (fwk.Plugin, error) {
+func newFakeNodeSelector(_ context.Context, args runtime.Object, _ fwkapi.Handle) (fwkapi.Plugin, error) {
 	pl := &fakeNodeSelector{}
 	if err := frameworkruntime.DecodeInto(args, &pl.fakeNodeSelectorArgs); err != nil {
 		return nil, err
@@ -364,7 +364,7 @@ func (f *fakeNodeSelectorDependOnPodAnnotation) Filter(_ context.Context, _ fwka
 	return nil
 }
 
-func newFakeNodeSelectorDependOnPodAnnotation(_ context.Context, _ runtime.Object, _ fwk.Handle) (fwk.Plugin, error) {
+func newFakeNodeSelectorDependOnPodAnnotation(_ context.Context, _ runtime.Object, _ fwkapi.Handle) (fwkapi.Plugin, error) {
 	return &fakeNodeSelectorDependOnPodAnnotation{}, nil
 }
 
@@ -372,8 +372,8 @@ type TestPlugin struct {
 	name string
 }
 
-var _ fwk.ScorePlugin = &TestPlugin{}
-var _ fwk.FilterPlugin = &TestPlugin{}
+var _ fwkapi.ScorePlugin = &TestPlugin{}
+var _ fwkapi.FilterPlugin = &TestPlugin{}
 
 func (t *TestPlugin) Name() string {
 	return t.name
@@ -383,7 +383,7 @@ func (t *TestPlugin) Score(ctx context.Context, state fwkapi.CycleState, p *v1.P
 	return 1, nil
 }
 
-func (t *TestPlugin) ScoreExtensions() fwk.ScoreExtensions {
+func (t *TestPlugin) ScoreExtensions() fwkapi.ScoreExtensions {
 	return nil
 }
 
@@ -975,7 +975,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 						var gotForgetPod *v1.Pod
 						var gotAssumedPod *v1.Pod
 						var gotBinding *v1.Binding
-						var gotNominatingInfo *fwk.NominatingInfo
+						var gotNominatingInfo *fwkapi.NominatingInfo
 
 						client := clientsetfake.NewClientset(item.sendPod)
 						informerFactory := informers.NewSharedInformerFactory(client, 0)
@@ -1133,7 +1133,7 @@ func TestSchedulerScheduleOne(t *testing.T) {
 							t.Errorf("Unexpected error. Wanted %v, got %v", item.expectError.Error(), gotError.Error())
 						}
 						if item.expectError != nil {
-							expectedNominatingInfo := &fwk.NominatingInfo{NominatingMode: fwk.ModeOverride, NominatedNodeName: ""}
+							expectedNominatingInfo := &fwkapi.NominatingInfo{NominatingMode: fwkapi.ModeOverride, NominatedNodeName: ""}
 							if diff := cmp.Diff(expectedNominatingInfo, gotNominatingInfo); diff != "" {
 								t.Errorf("Unexpected nominatingInfo (-want,+got):\n%s", diff)
 							}
@@ -1251,8 +1251,8 @@ func TestHandleSchedulingFailureSkipsRecreatedPod(t *testing.T) {
 
 type constSigPluginConfig struct {
 	name       string
-	signature  []fwk.SignFragment
-	status     *fwk.Status
+	signature  []fwkapi.SignFragment
+	status     *fwkapi.Status
 	pluginType string
 }
 
@@ -1260,45 +1260,45 @@ type constantSigPlugin struct {
 	config *constSigPluginConfig
 }
 
-var _ fwk.FilterPlugin = &constantSigPlugin{}
-var _ fwk.PreFilterPlugin = &constantSigPlugin{}
-var _ fwk.ScorePlugin = &constantSigPlugin{}
-var _ fwk.PreScorePlugin = &constantSigPlugin{}
+var _ fwkapi.FilterPlugin = &constantSigPlugin{}
+var _ fwkapi.PreFilterPlugin = &constantSigPlugin{}
+var _ fwkapi.ScorePlugin = &constantSigPlugin{}
+var _ fwkapi.PreScorePlugin = &constantSigPlugin{}
 
 func (pl *constantSigPlugin) Name() string {
 	return pl.config.name
 }
 
-func (pl *constantSigPlugin) Filter(_ context.Context, _ fwk.CycleState, _ *v1.Pod, _ fwk.NodeInfo) *fwk.Status {
-	return fwk.NewStatus(fwk.Success)
+func (pl *constantSigPlugin) Filter(_ context.Context, _ fwkapi.CycleState, _ *v1.Pod, _ fwkapi.NodeInfo) *fwkapi.Status {
+	return fwkapi.NewStatus(fwkapi.Success)
 }
 
-func (pl *constantSigPlugin) PreFilter(ctx context.Context, state fwk.CycleState, p *v1.Pod, nodes []fwk.NodeInfo) (*fwk.PreFilterResult, *fwk.Status) {
-	return nil, fwk.NewStatus(fwk.Success)
+func (pl *constantSigPlugin) PreFilter(ctx context.Context, state fwkapi.CycleState, p *v1.Pod, nodes []fwkapi.NodeInfo) (*fwkapi.PreFilterResult, *fwkapi.Status) {
+	return nil, fwkapi.NewStatus(fwkapi.Success)
 }
 
-func (pl *constantSigPlugin) PreFilterExtensions() fwk.PreFilterExtensions {
+func (pl *constantSigPlugin) PreFilterExtensions() fwkapi.PreFilterExtensions {
 	return nil
 }
 
-func (pl *constantSigPlugin) PreScore(ctx context.Context, state fwk.CycleState, pod *v1.Pod, nodes []fwk.NodeInfo) *fwk.Status {
-	return fwk.NewStatus(fwk.Success)
+func (pl *constantSigPlugin) PreScore(ctx context.Context, state fwkapi.CycleState, pod *v1.Pod, nodes []fwkapi.NodeInfo) *fwkapi.Status {
+	return fwkapi.NewStatus(fwkapi.Success)
 }
 
-func (pl *constantSigPlugin) Score(ctx context.Context, state fwk.CycleState, p *v1.Pod, nodeInfo fwk.NodeInfo) (int64, *fwk.Status) {
-	return 1, fwk.NewStatus(fwk.Success)
+func (pl *constantSigPlugin) Score(ctx context.Context, state fwkapi.CycleState, p *v1.Pod, nodeInfo fwkapi.NodeInfo) (int64, *fwkapi.Status) {
+	return 1, fwkapi.NewStatus(fwkapi.Success)
 }
 
-func (pl *constantSigPlugin) ScoreExtensions() fwk.ScoreExtensions {
+func (pl *constantSigPlugin) ScoreExtensions() fwkapi.ScoreExtensions {
 	return nil
 }
 
-func (pl *constantSigPlugin) SignPod(_ context.Context, pod *v1.Pod) ([]fwk.SignFragment, *fwk.Status) {
+func (pl *constantSigPlugin) SignPod(_ context.Context, pod *v1.Pod) ([]fwkapi.SignFragment, *fwkapi.Status) {
 	return pl.config.signature, pl.config.status
 }
 
 func newConstSigFactory(config *constSigPluginConfig) frameworkruntime.PluginFactory {
-	return func(_ context.Context, _ runtime.Object, handle fwk.Handle) (fwk.Plugin, error) {
+	return func(_ context.Context, _ runtime.Object, handle fwkapi.Handle) (fwkapi.Plugin, error) {
 		return &constantSigPlugin{config: config}, nil
 	}
 }
@@ -1318,8 +1318,8 @@ func TestSignatures(t *testing.T) {
 			plugins: []*constSigPluginConfig{
 				{
 					name:       "ConstSig",
-					signature:  []fwk.SignFragment{{Key: "test", Value: 16}},
-					status:     fwk.NewStatus(fwk.Success),
+					signature:  []fwkapi.SignFragment{{Key: "test", Value: 16}},
+					status:     fwkapi.NewStatus(fwkapi.Success),
 					pluginType: "filter",
 				},
 			},
@@ -1330,8 +1330,8 @@ func TestSignatures(t *testing.T) {
 			plugins: []*constSigPluginConfig{
 				{
 					name:       "ConstSig",
-					signature:  []fwk.SignFragment{{Key: "test", Value: 16}},
-					status:     fwk.NewStatus(fwk.Success),
+					signature:  []fwkapi.SignFragment{{Key: "test", Value: 16}},
+					status:     fwkapi.NewStatus(fwkapi.Success),
 					pluginType: "prefilter",
 				},
 			},
@@ -1342,8 +1342,8 @@ func TestSignatures(t *testing.T) {
 			plugins: []*constSigPluginConfig{
 				{
 					name:       "ConstSig",
-					signature:  []fwk.SignFragment{{Key: "test", Value: 16}},
-					status:     fwk.NewStatus(fwk.Success),
+					signature:  []fwkapi.SignFragment{{Key: "test", Value: 16}},
+					status:     fwkapi.NewStatus(fwkapi.Success),
 					pluginType: "score",
 				},
 			},
@@ -1354,8 +1354,8 @@ func TestSignatures(t *testing.T) {
 			plugins: []*constSigPluginConfig{
 				{
 					name:       "ConstSig",
-					signature:  []fwk.SignFragment{{Key: "test", Value: 16}},
-					status:     fwk.NewStatus(fwk.Success),
+					signature:  []fwkapi.SignFragment{{Key: "test", Value: 16}},
+					status:     fwkapi.NewStatus(fwkapi.Success),
 					pluginType: "prescore",
 				},
 			},
@@ -1366,14 +1366,14 @@ func TestSignatures(t *testing.T) {
 			plugins: []*constSigPluginConfig{
 				{
 					name:       "ConstSig",
-					signature:  []fwk.SignFragment{{Key: "test", Value: 16}},
-					status:     fwk.NewStatus(fwk.Success),
+					signature:  []fwkapi.SignFragment{{Key: "test", Value: 16}},
+					status:     fwkapi.NewStatus(fwkapi.Success),
 					pluginType: "filter",
 				},
 				{
 					name:       "ConstSig2",
-					signature:  []fwk.SignFragment{{Key: "test2", Value: 17}},
-					status:     fwk.NewStatus(fwk.Success),
+					signature:  []fwkapi.SignFragment{{Key: "test2", Value: 17}},
+					status:     fwkapi.NewStatus(fwkapi.Success),
 					pluginType: "score",
 				},
 			},
@@ -1384,8 +1384,8 @@ func TestSignatures(t *testing.T) {
 			plugins: []*constSigPluginConfig{
 				{
 					name:       "ConstSig",
-					signature:  []fwk.SignFragment{{Key: "test", Value: 16}, {Key: "test2", Value: 17}},
-					status:     fwk.NewStatus(fwk.Success),
+					signature:  []fwkapi.SignFragment{{Key: "test", Value: 16}, {Key: "test2", Value: 17}},
+					status:     fwkapi.NewStatus(fwkapi.Success),
 					pluginType: "filter",
 				},
 			},
@@ -1396,14 +1396,14 @@ func TestSignatures(t *testing.T) {
 			plugins: []*constSigPluginConfig{
 				{
 					name:       "ConstSig",
-					signature:  []fwk.SignFragment{{Key: "test", Value: 16}},
-					status:     fwk.NewStatus(fwk.Success),
+					signature:  []fwkapi.SignFragment{{Key: "test", Value: 16}},
+					status:     fwkapi.NewStatus(fwkapi.Success),
 					pluginType: "filter",
 				},
 				{
 					name:       "ConstSig2",
-					signature:  []fwk.SignFragment{{Key: "test", Value: 16}},
-					status:     fwk.NewStatus(fwk.Success),
+					signature:  []fwkapi.SignFragment{{Key: "test", Value: 16}},
+					status:     fwkapi.NewStatus(fwkapi.Success),
 					pluginType: "score",
 				},
 			},
@@ -1414,7 +1414,7 @@ func TestSignatures(t *testing.T) {
 			plugins: []*constSigPluginConfig{
 				{
 					name:       "ConstSig",
-					status:     fwk.NewStatus(fwk.Unschedulable),
+					status:     fwkapi.NewStatus(fwkapi.Unschedulable),
 					pluginType: "filter",
 				},
 			},
@@ -1425,7 +1425,7 @@ func TestSignatures(t *testing.T) {
 			plugins: []*constSigPluginConfig{
 				{
 					name:       "ConstSig",
-					status:     fwk.NewStatus(fwk.Error),
+					status:     fwkapi.NewStatus(fwkapi.Error),
 					pluginType: "filter",
 				},
 			},
@@ -2257,14 +2257,14 @@ func TestSchedulerWithVolumeBinding(t *testing.T) {
 func TestSchedulerBinding(t *testing.T) {
 	table := []struct {
 		podName      string
-		extenders    []fwk.Extender
+		extenders    []fwkapi.Extender
 		wantBinderID int
 		name         string
 	}{
 		{
 			name:    "the extender is not a binder",
 			podName: "pod0",
-			extenders: []fwk.Extender{
+			extenders: []fwkapi.Extender{
 				&fakeExtender{isBinder: false, interestedPodName: "pod0"},
 			},
 			wantBinderID: -1, // default binding.
@@ -2272,7 +2272,7 @@ func TestSchedulerBinding(t *testing.T) {
 		{
 			name:    "one of the extenders is a binder and interested in pod",
 			podName: "pod0",
-			extenders: []fwk.Extender{
+			extenders: []fwkapi.Extender{
 				&fakeExtender{isBinder: false, interestedPodName: "pod0"},
 				&fakeExtender{isBinder: true, interestedPodName: "pod0"},
 			},
@@ -2281,7 +2281,7 @@ func TestSchedulerBinding(t *testing.T) {
 		{
 			name:    "one of the extenders is a binder, but not interested in pod",
 			podName: "pod1",
-			extenders: []fwk.Extender{
+			extenders: []fwkapi.Extender{
 				&fakeExtender{isBinder: false, interestedPodName: "pod1"},
 				&fakeExtender{isBinder: true, interestedPodName: "pod0"},
 			},
@@ -2290,7 +2290,7 @@ func TestSchedulerBinding(t *testing.T) {
 		{
 			name:    "ignore when extender bind failed",
 			podName: "pod1",
-			extenders: []fwk.Extender{
+			extenders: []fwkapi.Extender{
 				&fakeExtender{isBinder: true, errBind: true, interestedPodName: "pod1", ignorable: true},
 			},
 			wantBinderID: -1, // default binding.
@@ -2373,7 +2373,7 @@ func TestUpdatePodStatus(t *testing.T) {
 		currentPodConditions     []v1.PodCondition
 		newPodCondition          *v1.PodCondition
 		currentNominatedNodeName string
-		newNominatingInfo        *fwk.NominatingInfo
+		newNominatingInfo        *fwkapi.NominatingInfo
 		expectPatchRequest       bool
 		expectedPatchDataPattern string
 	}{
@@ -2503,7 +2503,7 @@ func TestUpdatePodStatus(t *testing.T) {
 				Reason:             "currentReason",
 				Message:            "currentMessage",
 			},
-			newNominatingInfo:        &fwk.NominatingInfo{NominatingMode: fwk.ModeOverride, NominatedNodeName: "node1"},
+			newNominatingInfo:        &fwkapi.NominatingInfo{NominatingMode: fwkapi.ModeOverride, NominatedNodeName: "node1"},
 			expectPatchRequest:       true,
 			expectedPatchDataPattern: `{"status":{"nominatedNodeName":"node1"}}`,
 		},
@@ -2580,7 +2580,7 @@ func TestUpdatePodStatus(t *testing.T) {
 				ctx, cancel := context.WithCancel(ctx)
 				defer cancel()
 
-				var apiCacher fwk.APICacher
+				var apiCacher fwkapi.APICacher
 				if asyncAPICallsEnabled {
 					apiDispatcher := apidispatcher.New(cs, 16, apicalls.Relevances)
 					apiDispatcher.Run(logger)
@@ -2624,29 +2624,29 @@ func TestUpdatePodStatus(t *testing.T) {
 func Test_SelectHost(t *testing.T) {
 	tests := []struct {
 		name             string
-		list             []fwk.NodePluginScores
-		expectedNodeList []fwk.NodePluginScores
+		list             []fwkapi.NodePluginScores
+		expectedNodeList []fwkapi.NodePluginScores
 		wantError        error
 	}{
 		{
 			name: "unique properly ordered scores",
-			list: []fwk.NodePluginScores{
+			list: []fwkapi.NodePluginScores{
 				{Name: "node1", TotalScore: 1},
 				{Name: "node2", TotalScore: 2},
 			},
-			expectedNodeList: []fwk.NodePluginScores{
+			expectedNodeList: []fwkapi.NodePluginScores{
 				{Name: "node2", TotalScore: 2},
 				{Name: "node1", TotalScore: 1},
 			},
 		},
 		{
 			name: "equal scores",
-			list: []fwk.NodePluginScores{
+			list: []fwkapi.NodePluginScores{
 				{Name: "node2.2", TotalScore: 2, Randomizer: 2},
 				{Name: "node2.1", TotalScore: 2, Randomizer: 1},
 				{Name: "node2.3", TotalScore: 2, Randomizer: 3},
 			},
-			expectedNodeList: []fwk.NodePluginScores{
+			expectedNodeList: []fwkapi.NodePluginScores{
 				{Name: "node2.3", TotalScore: 2, Randomizer: 3},
 				{Name: "node2.2", TotalScore: 2, Randomizer: 2},
 				{Name: "node2.1", TotalScore: 2, Randomizer: 1},
@@ -2654,13 +2654,13 @@ func Test_SelectHost(t *testing.T) {
 		},
 		{
 			name: "out of order scores",
-			list: []fwk.NodePluginScores{
+			list: []fwkapi.NodePluginScores{
 				{Name: "node3.1", TotalScore: 3, Randomizer: 1},
 				{Name: "node2.1", TotalScore: 2},
 				{Name: "node1.1", TotalScore: 1},
 				{Name: "node3.2", TotalScore: 3, Randomizer: 2},
 			},
-			expectedNodeList: []fwk.NodePluginScores{
+			expectedNodeList: []fwkapi.NodePluginScores{
 				{Name: "node3.2", TotalScore: 3, Randomizer: 2},
 				{Name: "node3.1", TotalScore: 3, Randomizer: 1},
 				{Name: "node2.1", TotalScore: 2},
@@ -2672,7 +2672,7 @@ func Test_SelectHost(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var err error
-			var scoreList = []fwk.NodePluginScores{}
+			var scoreList = []fwkapi.NodePluginScores{}
 			h := newSortedNodeScores(test.list)
 			for range len(test.list) {
 				gotNode := h.PopScore()
@@ -2838,7 +2838,7 @@ func TestFindNodesThatPassExtenders(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, ctx := ktesting.NewTestContext(t)
-			var extenders []fwk.Extender
+			var extenders []fwkapi.Extender
 			for ii := range tt.extenders {
 				extenders = append(extenders, &tt.extenders[ii])
 			}
@@ -3368,11 +3368,11 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter2",
-					tf.NewFakePreFilterPlugin("FakePreFilter2", &fwk.PreFilterResult{NodeNames: sets.New("node2")}, nil),
+					tf.NewFakePreFilterPlugin("FakePreFilter2", &fwkapi.PreFilterResult{NodeNames: sets.New("node2")}, nil),
 				),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter3",
-					tf.NewFakePreFilterPlugin("FakePreFilter3", &fwk.PreFilterResult{NodeNames: sets.New("node1", "node2")}, nil),
+					tf.NewFakePreFilterPlugin("FakePreFilter3", &fwkapi.PreFilterResult{NodeNames: sets.New("node1", "node2")}, nil),
 				),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
@@ -3396,11 +3396,11 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter2",
-					tf.NewFakePreFilterPlugin("FakePreFilter2", &fwk.PreFilterResult{NodeNames: sets.New("node2")}, nil),
+					tf.NewFakePreFilterPlugin("FakePreFilter2", &fwkapi.PreFilterResult{NodeNames: sets.New("node2")}, nil),
 				),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter3",
-					tf.NewFakePreFilterPlugin("FakePreFilter3", &fwk.PreFilterResult{NodeNames: sets.New("node1")}, nil),
+					tf.NewFakePreFilterPlugin("FakePreFilter3", &fwkapi.PreFilterResult{NodeNames: sets.New("node1")}, nil),
 				),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
@@ -3430,7 +3430,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter2",
-					tf.NewFakePreFilterPlugin("FakePreFilter2", &fwk.PreFilterResult{NodeNames: sets.New[string]()}, nil),
+					tf.NewFakePreFilterPlugin("FakePreFilter2", &fwkapi.PreFilterResult{NodeNames: sets.New[string]()}, nil),
 				),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
@@ -3454,7 +3454,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter",
-					tf.NewFakePreFilterPlugin("FakePreFilter", &fwk.PreFilterResult{NodeNames: sets.New[string]("node2")}, nil),
+					tf.NewFakePreFilterPlugin("FakePreFilter", &fwkapi.PreFilterResult{NodeNames: sets.New[string]("node2")}, nil),
 				),
 				tf.RegisterFilterPlugin(
 					"FakeFilter",
@@ -3493,7 +3493,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 						"node1": fwkapi.Unschedulable,
 					}),
 				),
-				tf.RegisterPluginAsExtensions("FakeFilter2", func(_ context.Context, configuration runtime.Object, f fwk.Handle) (fwk.Plugin, error) {
+				tf.RegisterPluginAsExtensions("FakeFilter2", func(_ context.Context, configuration runtime.Object, f fwkapi.Handle) (fwkapi.Plugin, error) {
 					return tf.FakePreFilterAndFilterPlugin{
 						FakePreFilterPlugin: &tf.FakePreFilterPlugin{
 							Result: nil,
@@ -3560,7 +3560,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter",
-					tf.NewFakePreFilterPlugin("FakePreFilter", &fwk.PreFilterResult{NodeNames: sets.New("node1", "node2")}, nil),
+					tf.NewFakePreFilterPlugin("FakePreFilter", &fwkapi.PreFilterResult{NodeNames: sets.New("node1", "node2")}, nil),
 				),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
@@ -3580,7 +3580,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter",
-					tf.NewFakePreFilterPlugin("FakePreFilter", &fwk.PreFilterResult{
+					tf.NewFakePreFilterPlugin("FakePreFilter", &fwkapi.PreFilterResult{
 						NodeNames: sets.New("invalid-node"),
 					}, nil),
 				),
@@ -3683,7 +3683,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			var extenders []fwk.Extender
+			var extenders []fwkapi.Extender
 			for ii := range test.extenders {
 				extenders = append(extenders, &test.extenders[ii])
 			}
@@ -3849,7 +3849,7 @@ func TestFindFitPredicateCallCounts(t *testing.T) {
 			plugin := tf.FakeFilterPlugin{}
 			registerFakeFilterFunc := tf.RegisterFilterPlugin(
 				"FakeFilter",
-				func(_ context.Context, _ runtime.Object, fh fwk.Handle) (fwk.Plugin, error) {
+				func(_ context.Context, _ runtime.Object, fh fwkapi.Handle) (fwkapi.Plugin, error) {
 					return &plugin, nil
 				},
 			)
@@ -3890,7 +3890,7 @@ func TestFindFitPredicateCallCounts(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Error adding nominated pod to podInformer: %s", err)
 			}
-			schedFramework.AddNominatedPod(logger, podinfo, &fwk.NominatingInfo{NominatingMode: fwk.ModeOverride, NominatedNodeName: "1"})
+			schedFramework.AddNominatedPod(logger, podinfo, &fwkapi.NominatingInfo{NominatingMode: fwkapi.ModeOverride, NominatedNodeName: "1"})
 
 			_, _, _, _, err = scheduler.findNodesThatFitPod(ctx, schedFramework, framework.NewCycleState(), test.pod)
 			if err != nil {
@@ -4114,7 +4114,7 @@ func Test_prioritizeNodes(t *testing.T) {
 		nodes               []*v1.Node
 		pluginRegistrations []tf.RegisterPluginFunc
 		extenders           []tf.FakeExtender
-		want                []fwk.NodePluginScores
+		want                []fwkapi.NodePluginScores
 	}{
 		{
 			name:  "the score from all plugins should be recorded in PluginToNodeScores",
@@ -4127,10 +4127,10 @@ func Test_prioritizeNodes(t *testing.T) {
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
 			extenders: nil,
-			want: []fwk.NodePluginScores{
+			want: []fwkapi.NodePluginScores{
 				{
 					Name: "node1",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "Node2Prioritizer",
 							Score: 10,
@@ -4144,7 +4144,7 @@ func Test_prioritizeNodes(t *testing.T) {
 				},
 				{
 					Name: "node2",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "Node2Prioritizer",
 							Score: 100,
@@ -4189,10 +4189,10 @@ func Test_prioritizeNodes(t *testing.T) {
 					},
 				},
 			},
-			want: []fwk.NodePluginScores{
+			want: []fwkapi.NodePluginScores{
 				{
 					Name: "node1",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 
 						{
 							Name:  "FakeExtender1",
@@ -4211,7 +4211,7 @@ func Test_prioritizeNodes(t *testing.T) {
 				},
 				{
 					Name: "node2",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "FakeExtender1",
 							Score: 30,
@@ -4244,10 +4244,10 @@ func Test_prioritizeNodes(t *testing.T) {
 				), "PreScore", "Score"),
 			},
 			extenders: nil,
-			want: []fwk.NodePluginScores{
+			want: []fwkapi.NodePluginScores{
 				{
 					Name: "node1",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "Node2Prioritizer",
 							Score: 10,
@@ -4261,7 +4261,7 @@ func Test_prioritizeNodes(t *testing.T) {
 				},
 				{
 					Name: "node2",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "Node2Prioritizer",
 							Score: 100,
@@ -4288,9 +4288,9 @@ func Test_prioritizeNodes(t *testing.T) {
 				), "PreScore", "Score"),
 			},
 			extenders: nil,
-			want: []fwk.NodePluginScores{
-				{Name: "node1", Scores: []fwk.PluginScore{}},
-				{Name: "node2", Scores: []fwk.PluginScore{}},
+			want: []fwkapi.NodePluginScores{
+				{Name: "node1", Scores: []fwkapi.PluginScore{}},
+				{Name: "node2", Scores: []fwkapi.PluginScore{}},
 			},
 		},
 		{
@@ -4315,10 +4315,10 @@ func Test_prioritizeNodes(t *testing.T) {
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
 			extenders: nil,
-			want: []fwk.NodePluginScores{
+			want: []fwkapi.NodePluginScores{
 				{
 					Name: "node1",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "ImageLocality",
 							Score: 5,
@@ -4328,7 +4328,7 @@ func Test_prioritizeNodes(t *testing.T) {
 				},
 				{
 					Name: "node2",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "ImageLocality",
 							Score: 5,
@@ -4338,7 +4338,7 @@ func Test_prioritizeNodes(t *testing.T) {
 				},
 				{
 					Name: "node3",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "ImageLocality",
 							Score: 5,
@@ -4369,10 +4369,10 @@ func Test_prioritizeNodes(t *testing.T) {
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 			},
 			extenders: nil,
-			want: []fwk.NodePluginScores{
+			want: []fwkapi.NodePluginScores{
 				{
 					Name: "node1",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "ImageLocality",
 							Score: 18,
@@ -4382,7 +4382,7 @@ func Test_prioritizeNodes(t *testing.T) {
 				},
 				{
 					Name: "node2",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "ImageLocality",
 							Score: 18,
@@ -4392,7 +4392,7 @@ func Test_prioritizeNodes(t *testing.T) {
 				},
 				{
 					Name: "node3",
-					Scores: []fwk.PluginScore{
+					Scores: []fwkapi.PluginScore{
 						{
 							Name:  "ImageLocality",
 							Score: 0,
@@ -4433,7 +4433,7 @@ func Test_prioritizeNodes(t *testing.T) {
 			}
 
 			state := framework.NewCycleState()
-			var extenders []fwk.Extender
+			var extenders []fwkapi.Extender
 			for ii := range test.extenders {
 				extenders = append(extenders, &test.extenders[ii])
 			}
@@ -4612,7 +4612,7 @@ func TestFindNodesThatFitPodDecisionLogs(t *testing.T) {
 				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 				tf.RegisterPreFilterPlugin(
 					"FakePreFilter",
-					tf.NewFakePreFilterPlugin("FakePreFilter", &framework.PreFilterResult{NodeNames: sets.New("node2")}, nil),
+					tf.NewFakePreFilterPlugin("FakePreFilter", &fwkapi.PreFilterResult{NodeNames: sets.New("node2")}, nil),
 				),
 				tf.RegisterFilterPlugin("TrueFilter", tf.NewTrueFilterPlugin),
 				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
@@ -4664,7 +4664,7 @@ func TestFindNodesThatFitPodDecisionLogs(t *testing.T) {
 
 			state := framework.NewCycleState()
 			framework.WriteSchedulingDecisionAttempt(state, 5)
-			_, _, err = scheduler.findNodesThatFitPod(tCtx, fwk, state, test.pod)
+			_, _, _, _, err = scheduler.findNodesThatFitPod(tCtx, fwk, state, test.pod)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -4843,7 +4843,7 @@ func TestPreferNominatedNodeFilterCallCounts(t *testing.T) {
 			plugin := tf.FakeFilterPlugin{FailedNodeReturnCodeMap: test.nodeReturnCodeMap}
 			registerFakeFilterFunc := tf.RegisterFilterPlugin(
 				"FakeFilter",
-				func(_ context.Context, _ runtime.Object, fh fwk.Handle) (fwk.Plugin, error) {
+				func(_ context.Context, _ runtime.Object, fh fwkapi.Handle) (fwkapi.Plugin, error) {
 					return &plugin, nil
 				},
 			)
@@ -5099,7 +5099,7 @@ func setupTestSchedulerWithVolumeBinding(ctx context.Context, t *testing.T, clie
 	fns := []tf.RegisterPluginFunc{
 		tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 		tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
-		tf.RegisterPluginAsExtensions(volumebinding.Name, func(ctx context.Context, plArgs runtime.Object, handle fwk.Handle) (fwk.Plugin, error) {
+		tf.RegisterPluginAsExtensions(volumebinding.Name, func(ctx context.Context, plArgs runtime.Object, handle fwkapi.Handle) (fwkapi.Plugin, error) {
 			return &volumebinding.VolumeBinding{Binder: volumeBinder, PVCLister: pvcInformer.Lister()}, nil
 		}, "PreFilter", "Filter", "Reserve", "PreBind"),
 	}

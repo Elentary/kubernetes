@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
-	fwk "k8s.io/kube-scheduler/framework"
+	fwkapi "k8s.io/kube-scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/names"
 )
@@ -45,17 +45,17 @@ const (
 
 // NominatedNodeReservation blocks scheduling on nodes reserved for quota preemption.
 type NominatedNodeReservation struct {
-	handle    framework.Handle
+	handle    fwkapi.Handle
 	profile   string
 	podLister corelisters.PodLister
 	store     *Store
 }
 
-var _ framework.FilterPlugin = &NominatedNodeReservation{}
-var _ framework.PostBindPlugin = &NominatedNodeReservation{}
+var _ fwkapi.FilterPlugin = &NominatedNodeReservation{}
+var _ fwkapi.PostBindPlugin = &NominatedNodeReservation{}
 
 // New initializes a new plugin and returns it.
-func New(_ context.Context, _ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
+func New(_ context.Context, _ runtime.Object, handle fwkapi.Handle) (fwkapi.Plugin, error) {
 	RegisterMetrics()
 	pl := &NominatedNodeReservation{handle: handle, profile: profileName(handle), store: SharedStore()}
 	if handle != nil && handle.SharedInformerFactory() != nil {
@@ -70,10 +70,10 @@ func (pl *NominatedNodeReservation) Name() string {
 }
 
 // Filter blocks nodes reserved for quota preemption from all non-holder pods.
-func (pl *NominatedNodeReservation) Filter(ctx context.Context, state fwk.CycleState, pod *v1.Pod, nodeInfo fwk.NodeInfo) *fwk.Status {
+func (pl *NominatedNodeReservation) Filter(ctx context.Context, state fwkapi.CycleState, pod *v1.Pod, nodeInfo fwkapi.NodeInfo) *fwkapi.Status {
 	node := nodeInfo.Node()
 	if node == nil {
-		return fwk.NewStatus(fwk.Error, "node info is missing node object")
+		return fwkapi.NewStatus(fwkapi.Error, "node info is missing node object")
 	}
 
 	reservation, ok := pl.store.Get(node.Name)
@@ -108,11 +108,11 @@ func (pl *NominatedNodeReservation) Filter(ctx context.Context, state fwk.CycleS
 	recordBlockedPod(pl.profile)
 	logger.V(3).Info("Blocking pod on reserved nominated node", "pod", klog.KObj(pod), "node", node.Name, "holder", klog.KRef(reservation.HolderNamespace, reservation.HolderName), "holderUID", reservation.HolderPodUID)
 	reason := fmt.Sprintf("%s by %s/%s", ErrReasonNodeReserved, reservation.HolderNamespace, reservation.HolderName)
-	return fwk.NewStatus(fwk.Unschedulable, reason)
+	return fwkapi.NewStatus(fwkapi.Unschedulable, reason)
 }
 
 // PostBind releases reservation once the holder pod is bound.
-func (pl *NominatedNodeReservation) PostBind(ctx context.Context, _ fwk.CycleState, pod *v1.Pod, _ string) {
+func (pl *NominatedNodeReservation) PostBind(ctx context.Context, _ fwkapi.CycleState, pod *v1.Pod, _ string) {
 	released, ok := pl.store.ReleaseByPod(pod.UID)
 	if !ok {
 		return
@@ -174,7 +174,7 @@ func isStaleReservation(holderPod *v1.Pod, reservation Reservation, nodeName str
 	return false, "", ""
 }
 
-func profileName(handle framework.Handle) string {
+func profileName(handle fwkapi.Handle) string {
 	if handle == nil {
 		return ""
 	}

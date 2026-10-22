@@ -38,7 +38,7 @@ import (
 	corev1helpers "k8s.io/component-helpers/scheduling/corev1"
 	"k8s.io/klog/v2"
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
-	fwk "k8s.io/kube-scheduler/framework"
+	fwkapi "k8s.io/kube-scheduler/framework"
 	corevalidation "k8s.io/kubernetes/pkg/apis/core/validation"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
@@ -73,7 +73,7 @@ const (
 
 // NamespaceResourceGuarantee enforces per-namespace protected resource guarantees.
 type NamespaceResourceGuarantee struct {
-	handle             framework.Handle
+	handle             fwkapi.Handle
 	profile            string
 	args               config.NamespaceResourceGuaranteeArgs
 	configuredResource []v1.ResourceName
@@ -89,11 +89,11 @@ const (
 	semiTier       protectedTier = "semi-guaranteed"
 )
 
-var _ framework.PreFilterPlugin = &NamespaceResourceGuarantee{}
-var _ framework.EnqueueExtensions = &NamespaceResourceGuarantee{}
-var _ framework.PostFilterPlugin = &NamespaceResourceGuarantee{}
-var _ framework.PreEnqueuePlugin = &NamespaceResourceGuarantee{}
-var _ framework.ScorePlugin = &NamespaceResourceGuarantee{}
+var _ fwkapi.PreFilterPlugin = &NamespaceResourceGuarantee{}
+var _ fwkapi.EnqueueExtensions = &NamespaceResourceGuarantee{}
+var _ fwkapi.PostFilterPlugin = &NamespaceResourceGuarantee{}
+var _ fwkapi.PreEnqueuePlugin = &NamespaceResourceGuarantee{}
+var _ fwkapi.ScorePlugin = &NamespaceResourceGuarantee{}
 var _ preemption.Interface = &NamespaceResourceGuarantee{}
 
 type resourceDeficit struct {
@@ -107,7 +107,7 @@ type nodePreemptionTrace struct {
 	deficientResources    []resourceDeficit
 	numPDBViolatingVictim int
 	victims               []*v1.Pod
-	statusCode            fwk.Code
+	statusCode            fwkapi.Code
 	statusMessage         string
 	packingScore          *preemptionCandidatePackingScore
 }
@@ -139,7 +139,7 @@ func (pl *NamespaceResourceGuarantee) Name() string {
 }
 
 // New initializes a new plugin and returns it.
-func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framework.Plugin, error) {
+func New(_ context.Context, obj runtime.Object, handle fwkapi.Handle) (fwkapi.Plugin, error) {
 	args, ok := obj.(*config.NamespaceResourceGuaranteeArgs)
 	if !ok {
 		return nil, fmt.Errorf("got args of type %T, want *NamespaceResourceGuaranteeArgs", obj)
@@ -194,7 +194,7 @@ func New(_ context.Context, obj runtime.Object, handle framework.Handle) (framew
 }
 
 // preFilterQuota checks whether a protected pod would exceed its namespace's shared protected resource guarantee.
-func (pl *NamespaceResourceGuarantee) preFilterQuota(_ context.Context, _ fwk.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *fwk.Status) {
+func (pl *NamespaceResourceGuarantee) preFilterQuota(_ context.Context, _ fwkapi.CycleState, pod *v1.Pod) (*fwkapi.PreFilterResult, *fwkapi.Status) {
 	tier := pl.podTier(pod)
 	if tier == "" || len(pl.configuredResource) == 0 {
 		return nil, nil
@@ -208,7 +208,7 @@ func (pl *NamespaceResourceGuarantee) preFilterQuota(_ context.Context, _ fwk.Cy
 	currentUsage, err := pl.namespaceProtectedUsage(pod.Namespace)
 	if err != nil {
 		pl.recordPreFilterDecision(pod, tier, preFilterResultError)
-		return nil, fwk.AsStatus(err)
+		return nil, fwkapi.AsStatus(err)
 	}
 
 	_, namespaceConfigured := pl.args.NamespaceGuarantees[pod.Namespace]
@@ -229,8 +229,8 @@ func (pl *NamespaceResourceGuarantee) preFilterQuota(_ context.Context, _ fwk.Cy
 		if resourceUsage+resourceRequested > resourceGuarantee {
 			pl.recordPreFilterDecision(pod, tier, preFilterResultQuotaExceeded)
 			pl.recordQuotaExceeded(pod, tier, resourceName)
-			return nil, fwk.NewStatus(
-				fwk.UnschedulableAndUnresolvable,
+			return nil, fwkapi.NewStatus(
+				fwkapi.UnschedulableAndUnresolvable,
 				fmt.Sprintf(
 					"namespace %q shared protected resource guarantee exceeded: resource=%q guarantee=%d current=%d requested=%d",
 					pod.Namespace,
@@ -248,35 +248,35 @@ func (pl *NamespaceResourceGuarantee) preFilterQuota(_ context.Context, _ fwk.Cy
 }
 
 // PreFilterExtensions returns nil because this plugin maintains no incremental state.
-func (pl *NamespaceResourceGuarantee) PreFilterExtensions() framework.PreFilterExtensions {
+func (pl *NamespaceResourceGuarantee) PreFilterExtensions() fwkapi.PreFilterExtensions {
 	return nil
 }
 
 // EventsToRegister returns the pod events that can reduce protected namespace resource usage.
-func (pl *NamespaceResourceGuarantee) EventsToRegister(_ context.Context) ([]fwk.ClusterEventWithHint, error) {
-	return []fwk.ClusterEventWithHint{
+func (pl *NamespaceResourceGuarantee) EventsToRegister(_ context.Context) ([]fwkapi.ClusterEventWithHint, error) {
+	return []fwkapi.ClusterEventWithHint{
 		{
-			Event:          fwk.ClusterEvent{Resource: fwk.Pod, ActionType: fwk.Delete | fwk.UpdatePodScaleDown},
+			Event:          fwkapi.ClusterEvent{Resource: fwkapi.Pod, ActionType: fwkapi.Delete | fwkapi.UpdatePodScaleDown},
 			QueueingHintFn: pl.isSchedulableAfterPodChange,
 		},
 	}, nil
 }
 
-func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state fwk.CycleState, pod *v1.Pod, m framework.NodeToStatusReader) (*framework.PostFilterResult, *fwk.Status) {
+func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state fwkapi.CycleState, pod *v1.Pod, m fwkapi.NodeToStatusReader) (*fwkapi.PostFilterResult, *fwkapi.Status) {
 	if !pl.isProtectedPod(pod) || len(pl.configuredResource) == 0 {
 		pl.recordPreemptionOutcome(pod, "ordinary", preemptionOutcomeIneligible)
-		return nil, fwk.NewStatus(fwk.Unschedulable, "namespace resource guarantee preemption is only enabled for protected pods")
+		return nil, fwkapi.NewStatus(fwkapi.Unschedulable, "namespace resource guarantee preemption is only enabled for protected pods")
 	}
 	tier := string(pl.podTier(pod))
 	if pl.evaluator == nil {
 		pl.recordPreemptionOutcome(pod, tier, preemptionOutcomeError)
-		return nil, fwk.NewStatus(fwk.Error, "namespace resource guarantee preemption evaluator is not initialized")
+		return nil, fwkapi.NewStatus(fwkapi.Error, "namespace resource guarantee preemption evaluator is not initialized")
 	}
 
 	trace, err := pl.newPreemptionTrace(pod)
 	if err != nil {
 		pl.recordPreemptionOutcome(pod, tier, preemptionOutcomeError)
-		return nil, fwk.AsStatus(err)
+		return nil, fwkapi.AsStatus(err)
 	}
 	if cycle := rdmaStateFromCycle(state); cycle != nil {
 		if cycle.trace != nil {
@@ -288,8 +288,8 @@ func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state fwk.
 	pl.preemptionTrace.Store(pod.UID, trace)
 	defer pl.preemptionTrace.Delete(pod.UID)
 
-	var result *framework.PostFilterResult
-	var status *fwk.Status
+	var result *fwkapi.PostFilterResult
+	var status *fwkapi.Status
 	if framework.NodeResourcePreferenceFromState(state) != nil {
 		result, status = pl.postFilterRDMA(ctx, state, pod, m)
 	} else {
@@ -304,14 +304,14 @@ func (pl *NamespaceResourceGuarantee) PostFilter(ctx context.Context, state fwk.
 
 	msg := status.Message()
 	if len(msg) > 0 {
-		return result, fwk.NewStatus(status.Code(), "preemption: "+msg)
+		return result, fwkapi.NewStatus(status.Code(), "preemption: "+msg)
 	}
 	return result, status
 }
 
 // Score favors nodes that already have protected GPU usage, which helps pack
 // protected GPU pods onto fewer nodes and reduces fragmentation.
-func (pl *NamespaceResourceGuarantee) Score(ctx context.Context, _ fwk.CycleState, pod *v1.Pod, nodeInfo fwk.NodeInfo) (int64, *fwk.Status) {
+func (pl *NamespaceResourceGuarantee) Score(ctx context.Context, _ fwkapi.CycleState, pod *v1.Pod, nodeInfo fwkapi.NodeInfo) (int64, *fwkapi.Status) {
 	incomingGPU := pl.scoredProtectedGPURequest(pod)
 	if incomingGPU == 0 {
 		return 0, nil
@@ -327,11 +327,11 @@ func (pl *NamespaceResourceGuarantee) Score(ctx context.Context, _ fwk.CycleStat
 }
 
 // ScoreExtensions returns nil because the score is already normalized.
-func (pl *NamespaceResourceGuarantee) ScoreExtensions() framework.ScoreExtensions {
+func (pl *NamespaceResourceGuarantee) ScoreExtensions() fwkapi.ScoreExtensions {
 	return nil
 }
 
-func (pl *NamespaceResourceGuarantee) syncNominatedNodeReservation(ctx context.Context, pod *v1.Pod, result *framework.PostFilterResult, status *fwk.Status) {
+func (pl *NamespaceResourceGuarantee) syncNominatedNodeReservation(ctx context.Context, pod *v1.Pod, result *fwkapi.PostFilterResult, status *fwkapi.Status) {
 	logger := klog.FromContext(ctx)
 	store := nominatednodereservation.SharedStore()
 
@@ -353,7 +353,7 @@ func (pl *NamespaceResourceGuarantee) syncNominatedNodeReservation(ctx context.C
 		return
 	}
 
-	if result != nil && result.Mode() == framework.ModeOverride && len(result.NominatedNodeName) == 0 {
+	if result != nil && result.Mode() == fwkapi.ModeOverride && len(result.NominatedNodeName) == 0 {
 		if released, ok := store.ReleaseByPod(pod.UID); ok {
 			nominatednodereservation.RecordTransition("released", "nomination_cleared")
 			logger.V(2).Info("Released nominated node reservation after preemption cleared nomination", "preemptor", klog.KObj(pod), "node", released.NodeName, "holderUID", released.HolderPodUID)
@@ -370,7 +370,7 @@ func (pl *NamespaceResourceGuarantee) syncNominatedNodeReservation(ctx context.C
 		return
 	}
 
-	if status == nil || status.Code() != fwk.Unschedulable {
+	if status == nil || status.Code() != fwkapi.Unschedulable {
 		return
 	}
 	msg := status.Message()
@@ -395,7 +395,7 @@ func (pl *NamespaceResourceGuarantee) syncNominatedNodeReservation(ctx context.C
 	}
 }
 
-func (pl *NamespaceResourceGuarantee) PreEnqueue(_ context.Context, pod *v1.Pod) *fwk.Status {
+func (pl *NamespaceResourceGuarantee) PreEnqueue(_ context.Context, pod *v1.Pod) *fwkapi.Status {
 	if !utilfeature.DefaultFeatureGate.Enabled(features.SchedulerAsyncPreemption) {
 		return nil
 	}
@@ -403,7 +403,7 @@ func (pl *NamespaceResourceGuarantee) PreEnqueue(_ context.Context, pod *v1.Pod)
 		return nil
 	}
 	if pl.evaluator.IsPodRunningPreemption(pod.GetUID()) {
-		return fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "waiting for the preemption for this pod to be finished")
+		return fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "waiting for the preemption for this pod to be finished")
 	}
 	return nil
 }
@@ -420,7 +420,7 @@ func (pl *NamespaceResourceGuarantee) CandidatesToVictimsMap(candidates []preemp
 	return m
 }
 
-func (pl *NamespaceResourceGuarantee) PodEligibleToPreemptOthers(_ context.Context, pod *v1.Pod, nominatedNodeStatus *fwk.Status) (bool, string) {
+func (pl *NamespaceResourceGuarantee) PodEligibleToPreemptOthers(_ context.Context, pod *v1.Pod, nominatedNodeStatus *fwkapi.Status) (bool, string) {
 	if pod.Spec.PreemptionPolicy != nil && *pod.Spec.PreemptionPolicy == v1.PreemptNever {
 		return false, "not eligible due to preemptionPolicy=Never."
 	}
@@ -428,7 +428,7 @@ func (pl *NamespaceResourceGuarantee) PodEligibleToPreemptOthers(_ context.Conte
 	nodeInfos := pl.handle.SnapshotSharedLister().NodeInfos()
 	nomNodeName := pod.Status.NominatedNodeName
 	if len(nomNodeName) > 0 {
-		if nominatedNodeStatus.Code() == fwk.UnschedulableAndUnresolvable {
+		if nominatedNodeStatus.Code() == fwkapi.UnschedulableAndUnresolvable {
 			return true, ""
 		}
 		if nodeInfo, _ := nodeInfos.Get(nomNodeName); nodeInfo != nil {
@@ -488,14 +488,14 @@ func (pl *NamespaceResourceGuarantee) packingScoreFuncs(_ context.Context, pod *
 
 func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 	ctx context.Context,
-	state fwk.CycleState,
+	state fwkapi.CycleState,
 	pod *v1.Pod,
-	nodeInfo fwk.NodeInfo,
+	nodeInfo fwkapi.NodeInfo,
 	pdbs []*policy.PodDisruptionBudget,
-) ([]*v1.Pod, int, *fwk.Status) {
+) ([]*v1.Pod, int, *fwkapi.Status) {
 	logger := klog.FromContext(ctx)
-	var potentialVictims []fwk.PodInfo
-	removePod := func(rpi fwk.PodInfo) error {
+	var potentialVictims []fwkapi.PodInfo
+	removePod := func(rpi fwkapi.PodInfo) error {
 		if err := nodeInfo.RemovePod(logger, rpi.GetPod()); err != nil {
 			return err
 		}
@@ -505,7 +505,7 @@ func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 		}
 		return nil
 	}
-	addPod := func(api fwk.PodInfo) error {
+	addPod := func(api fwkapi.PodInfo) error {
 		nodeInfo.AddPodInfo(api)
 		status := pl.handle.RunPreFilterExtensionAddPod(ctx, state, pod, api, nodeInfo)
 		if !status.IsSuccess() {
@@ -521,13 +521,13 @@ func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 		if corev1helpers.PodPriority(pi.GetPod()) < podPriority && pl.isEligiblePreemptionVictim(pod, pi.GetPod()) {
 			potentialVictims = append(potentialVictims, pi)
 			if err := removePod(pi); err != nil {
-				return nil, 0, fwk.AsStatus(err)
+				return nil, 0, fwkapi.AsStatus(err)
 			}
 		}
 	}
 
 	if len(potentialVictims) == 0 {
-		status := fwk.NewStatus(fwk.UnschedulableAndUnresolvable, "No preemption victims found for incoming pod")
+		status := fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable, "No preemption victims found for incoming pod")
 		pl.recordNodeTrace(pod.UID, &nodePreemptionTrace{
 			nodeName:           nodeInfo.Node().Name,
 			deficientResources: deficientResources,
@@ -554,12 +554,12 @@ func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 	var victims []*v1.Pod
 	numViolatingVictim := 0
 	violatingVictims, nonViolatingVictims := filterPodsWithPDBViolation(potentialVictims, pdbs)
-	reprievePod := func(pi fwk.PodInfo) (bool, error) {
+	reprievePod := func(pi fwkapi.PodInfo) (bool, error) {
 		if err := addPod(pi); err != nil {
 			return false, err
 		}
 		status := pl.handle.RunFilterPluginsWithNominatedPods(ctx, state, pod, nodeInfo)
-		if status.Code() == fwk.Error {
+		if status.Code() == fwkapi.Error {
 			return false, status.AsError()
 		}
 		fits := status.IsSuccess()
@@ -573,14 +573,14 @@ func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 	}
 	for _, p := range violatingVictims {
 		if fits, err := reprievePod(p); err != nil {
-			return nil, 0, fwk.AsStatus(err)
+			return nil, 0, fwkapi.AsStatus(err)
 		} else if !fits {
 			numViolatingVictim++
 		}
 	}
 	for _, p := range nonViolatingVictims {
 		if _, err := reprievePod(p); err != nil {
-			return nil, 0, fwk.AsStatus(err)
+			return nil, 0, fwkapi.AsStatus(err)
 		}
 	}
 
@@ -593,9 +593,9 @@ func (pl *NamespaceResourceGuarantee) SelectVictimsOnNode(
 		deficientResources:    deficientResources,
 		numPDBViolatingVictim: numViolatingVictim,
 		victims:               append([]*v1.Pod(nil), victims...),
-		statusCode:            fwk.Success,
+		statusCode:            fwkapi.Success,
 	})
-	return victims, numViolatingVictim, fwk.NewStatus(fwk.Success)
+	return victims, numViolatingVictim, fwkapi.NewStatus(fwkapi.Success)
 }
 
 func (pl *NamespaceResourceGuarantee) isEligiblePreemptionVictim(preemptor, victim *v1.Pod) bool {
@@ -606,29 +606,29 @@ func (pl *NamespaceResourceGuarantee) isEligiblePreemptionVictim(preemptor, vict
 	return managed
 }
 
-func (pl *NamespaceResourceGuarantee) isSchedulableAfterPodChange(logger klog.Logger, pod *v1.Pod, oldObj, newObj interface{}) (fwk.QueueingHint, error) {
+func (pl *NamespaceResourceGuarantee) isSchedulableAfterPodChange(logger klog.Logger, pod *v1.Pod, oldObj, newObj interface{}) (fwkapi.QueueingHint, error) {
 	originalPod, modifiedPod, err := schedutil.As[*v1.Pod](oldObj, newObj)
 	if err != nil {
-		return fwk.Queue, err
+		return fwkapi.Queue, err
 	}
 
 	// The unschedulable pod itself may become schedulable when it scales down.
 	if modifiedPod != nil && modifiedPod.UID == pod.UID {
 		if pl.requestDecreased(originalPod, modifiedPod) {
 			logger.V(5).Info("protected pod scaled down and may now fit under the namespace resource guarantee", "pod", klog.KObj(pod))
-			return fwk.Queue, nil
+			return fwkapi.Queue, nil
 		}
 		logger.V(5).Info("protected pod update did not reduce its relevant resource request", "pod", klog.KObj(pod))
-		return fwk.QueueSkip, nil
+		return fwkapi.QueueSkip, nil
 	}
 
 	if pl.namespaceUsageDecreased(originalPod, modifiedPod, pod.Namespace) {
 		logger.V(5).Info("namespace protected resource usage decreased and may unblock scheduling", "pod", klog.KObj(pod))
-		return fwk.Queue, nil
+		return fwkapi.Queue, nil
 	}
 
 	logger.V(5).Info("pod change did not reduce relevant namespace protected resource usage", "pod", klog.KObj(pod))
-	return fwk.QueueSkip, nil
+	return fwkapi.QueueSkip, nil
 }
 
 func (pl *NamespaceResourceGuarantee) namespaceProtectedUsage(namespace string) (map[v1.ResourceName]int64, error) {
@@ -725,7 +725,7 @@ func protectedGPUPackingScore(incomingGPU, allocatableGPU, protectedGPUUsage int
 	if requestedAfterScheduling > allocatableGPU {
 		requestedAfterScheduling = allocatableGPU
 	}
-	return (requestedAfterScheduling * framework.MaxNodeScore) / allocatableGPU
+	return (requestedAfterScheduling * fwkapi.MaxNodeScore) / allocatableGPU
 }
 
 func (pl *NamespaceResourceGuarantee) preemptionProtectedGPUPackingScore(pod *v1.Pod, nodeName string, victims *extenderv1.Victims) (preemptionCandidatePackingScore, bool) {
@@ -806,7 +806,7 @@ func (pl *NamespaceResourceGuarantee) calculateNumCandidates(numNodes int32) int
 	return n
 }
 
-func (pl *NamespaceResourceGuarantee) orderedDeficientResources(nodeInfo fwk.NodeInfo, pod *v1.Pod) []resourceDeficit {
+func (pl *NamespaceResourceGuarantee) orderedDeficientResources(nodeInfo fwkapi.NodeInfo, pod *v1.Pod) []resourceDeficit {
 	var deficits []resourceDeficit
 	for _, resourceName := range pl.configuredResource {
 		request := pl.resourceRequest(pod, resourceName)
@@ -862,7 +862,7 @@ func (pl *NamespaceResourceGuarantee) recordNodePreemptionScore(podUID types.UID
 	defer d.mu.Unlock()
 	nodeTrace, ok := d.nodes[nodeName]
 	if !ok {
-		nodeTrace = &nodePreemptionTrace{nodeName: nodeName, statusCode: fwk.Success}
+		nodeTrace = &nodePreemptionTrace{nodeName: nodeName, statusCode: fwkapi.Success}
 		d.nodes[nodeName] = nodeTrace
 	}
 	nodeTrace.packingScore = &score
@@ -882,10 +882,10 @@ func (pl *NamespaceResourceGuarantee) lookupTrace(podUID types.UID) (*preemption
 
 func (pl *NamespaceResourceGuarantee) logPreemptionDecision(
 	ctx context.Context,
-	state fwk.CycleState,
+	state fwkapi.CycleState,
 	preemptor *v1.Pod,
-	result *framework.PostFilterResult,
-	status *fwk.Status,
+	result *fwkapi.PostFilterResult,
+	status *fwkapi.Status,
 ) {
 	logger := klog.FromContext(ctx)
 	trace, ok := pl.lookupTrace(preemptor.UID)
@@ -903,9 +903,9 @@ func (pl *NamespaceResourceGuarantee) logPreemptionDecision(
 
 	keyvals := preemptionDecisionLogKeyvals(preemptor, state)
 	for nodeName, nodeTrace := range trace.nodes {
-		selected := nodeName == event.nominatedNode && nodeTrace.statusCode == fwk.Success
+		selected := nodeName == event.nominatedNode && nodeTrace.statusCode == fwkapi.Success
 		reason := "candidate not selected"
-		if nodeTrace.statusCode != fwk.Success {
+		if nodeTrace.statusCode != fwkapi.Success {
 			reason = nodeTrace.statusMessage
 		} else if selected {
 			reason = "selected"
@@ -945,7 +945,7 @@ func (pl *NamespaceResourceGuarantee) logPreemptionDecision(
 	}
 }
 
-func preemptionDecisionLogKeyvals(preemptor *v1.Pod, state fwk.CycleState) []interface{} {
+func preemptionDecisionLogKeyvals(preemptor *v1.Pod, state fwkapi.CycleState) []interface{} {
 	return []interface{}{
 		"profile", decisionLogProfile,
 		"decisionID", string(preemptor.UID),
@@ -984,7 +984,7 @@ func preemptionCandidateScore(nodeTrace *nodePreemptionTrace) int64 {
 	return nodeTrace.packingScore.score
 }
 
-func classifyPreemptionEvent(preemptor *v1.Pod, result *framework.PostFilterResult, status *fwk.Status, trace *preemptionDecisionTrace) preemptionEvent {
+func classifyPreemptionEvent(preemptor *v1.Pod, result *fwkapi.PostFilterResult, status *fwkapi.Status, trace *preemptionDecisionTrace) preemptionEvent {
 	nominatedNode := preemptor.Status.NominatedNodeName
 	if result != nil && len(result.NominatedNodeName) > 0 {
 		nominatedNode = result.NominatedNodeName
@@ -1000,7 +1000,7 @@ func classifyPreemptionEvent(preemptor *v1.Pod, result *framework.PostFilterResu
 	}
 
 	switch status.Code() {
-	case fwk.Success:
+	case fwkapi.Success:
 		victims := selectedVictimKeys(trace, nominatedNode)
 		return preemptionEvent{
 			eventType:     v1.EventTypeNormal,
@@ -1008,7 +1008,7 @@ func classifyPreemptionEvent(preemptor *v1.Pod, result *framework.PostFilterResu
 			nominatedNode: nominatedNode,
 			note:          formatStartedPreemptionEventNote(preemptor.UID, nominatedNode, victims),
 		}
-	case fwk.Error:
+	case fwkapi.Error:
 		return preemptionEvent{
 			eventType:     v1.EventTypeWarning,
 			reason:        preemptionErrorReason,
@@ -1134,7 +1134,7 @@ func podTerminatingByPreemption(p *v1.Pod) bool {
 	return false
 }
 
-func filterPodsWithPDBViolation(podInfos []fwk.PodInfo, pdbs []*policy.PodDisruptionBudget) (violatingPodInfos, nonViolatingPodInfos []fwk.PodInfo) {
+func filterPodsWithPDBViolation(podInfos []fwkapi.PodInfo, pdbs []*policy.PodDisruptionBudget) (violatingPodInfos, nonViolatingPodInfos []fwkapi.PodInfo) {
 	pdbsAllowed := make([]int32, len(pdbs))
 	for i, pdb := range pdbs {
 		pdbsAllowed[i] = pdb.Status.DisruptionsAllowed
@@ -1172,7 +1172,7 @@ func filterPodsWithPDBViolation(podInfos []fwk.PodInfo, pdbs []*policy.PodDisrup
 	return violatingPodInfos, nonViolatingPodInfos
 }
 
-func nodeRequestedForResource(nodeInfo fwk.NodeInfo, resourceName v1.ResourceName) int64 {
+func nodeRequestedForResource(nodeInfo fwkapi.NodeInfo, resourceName v1.ResourceName) int64 {
 	switch resourceName {
 	case v1.ResourceCPU:
 		return nodeInfo.GetRequested().GetMilliCPU()
@@ -1183,7 +1183,7 @@ func nodeRequestedForResource(nodeInfo fwk.NodeInfo, resourceName v1.ResourceNam
 	}
 }
 
-func nodeAllocatableForResource(nodeInfo fwk.NodeInfo, resourceName v1.ResourceName) int64 {
+func nodeAllocatableForResource(nodeInfo fwkapi.NodeInfo, resourceName v1.ResourceName) int64 {
 	switch resourceName {
 	case v1.ResourceCPU:
 		return nodeInfo.GetAllocatable().GetMilliCPU()
@@ -1194,7 +1194,7 @@ func nodeAllocatableForResource(nodeInfo fwk.NodeInfo, resourceName v1.ResourceN
 	}
 }
 
-func (pl *NamespaceResourceGuarantee) nodeProtectedResourceUsage(nodeInfo fwk.NodeInfo, resourceName v1.ResourceName) int64 {
+func (pl *NamespaceResourceGuarantee) nodeProtectedResourceUsage(nodeInfo fwkapi.NodeInfo, resourceName v1.ResourceName) int64 {
 	if nodeInfo == nil {
 		return 0
 	}
@@ -1223,7 +1223,7 @@ func podKeys(pods []*v1.Pod) []string {
 	return out
 }
 
-func getPDBLister(handle framework.Handle) policylisters.PodDisruptionBudgetLister {
+func getPDBLister(handle fwkapi.Handle) policylisters.PodDisruptionBudgetLister {
 	if handle == nil || handle.SharedInformerFactory() == nil {
 		return nil
 	}
@@ -1258,8 +1258,9 @@ func (pl *NamespaceResourceGuarantee) podRequests(pod *v1.Pod) v1.ResourceList {
 	}
 
 	return resourcehelper.PodRequests(pod, resourcehelper.PodResourcesOptions{
-		UseStatusResources:    utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodVerticalScaling),
-		SkipPodLevelResources: !utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResources),
+		UseStatusResources:                             utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodVerticalScaling),
+		SkipPodLevelResources:                          !utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResources),
+		InPlacePodLevelResourcesVerticalScalingEnabled: utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodLevelResourcesVerticalScaling),
 	})
 }
 

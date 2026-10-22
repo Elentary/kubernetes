@@ -122,7 +122,7 @@ type TestPlugin struct {
 	name string
 }
 
-func newTestPlugin(_ context.Context, injArgs runtime.Object, f fwk.Handle) (fwk.Plugin, error) {
+func newTestPlugin(_ context.Context, injArgs runtime.Object, f fwkapi.Handle) (fwkapi.Plugin, error) {
 	return &TestPlugin{name: "test-plugin"}, nil
 }
 
@@ -144,7 +144,7 @@ func (pl *TestPlugin) Name() string {
 	return pl.name
 }
 
-func (pl *TestPlugin) PreFilterExtensions() fwk.PreFilterExtensions {
+func (pl *TestPlugin) PreFilterExtensions() fwkapi.PreFilterExtensions {
 	return pl
 }
 
@@ -425,7 +425,7 @@ func TestPostFilter(t *testing.T) {
 					tf.RegisterPluginAsExtensions("test-plugin", newTestPlugin, "PreFilter"),
 					tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 				}
-				var extenders []fwk.Extender
+				var extenders []fwkapi.Extender
 				if tt.extender != nil {
 					extenders = append(extenders, tt.extender)
 				}
@@ -1155,7 +1155,7 @@ func TestDryRunPreemption(t *testing.T) {
 			registeredPlugins := append([]tf.RegisterPluginFunc{
 				tf.RegisterFilterPlugin(
 					"FakeFilter",
-					func(_ context.Context, _ runtime.Object, fh fwk.Handle) (fwk.Plugin, error) {
+					func(_ context.Context, _ runtime.Object, fh fwkapi.Handle) (fwkapi.Plugin, error) {
 						return &fakePlugin, nil
 					},
 				)},
@@ -1937,7 +1937,7 @@ func TestPreempt(t *testing.T) {
 		extenders      []*tf.FakeExtender
 		nodeNames      []string
 		registerPlugin tf.RegisterPluginFunc
-		want           *fwk.PostFilterResult
+		want           *fwkapi.PostFilterResult
 		expectedPods   []string // list of preempted pods
 	}{
 		{
@@ -2194,7 +2194,7 @@ func TestPreempt(t *testing.T) {
 						cachedNodeInfo.SetNode(node)
 						cachedNodeInfoMap[node.Name] = cachedNodeInfo
 					}
-					var extenders []fwk.Extender
+					var extenders []fwkapi.Extender
 					for _, extender := range test.extenders {
 						// Set nodeInfoMap as extenders cached node information.
 						extender.CachedNodeNameToInfo = cachedNodeInfoMap

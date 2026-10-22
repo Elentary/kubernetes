@@ -288,5 +288,5 @@ func NewPostFilterResultWithNominatedNode(name string) *fwk.PostFilterResult {
 
 // PluginConfigurationValidator checks the final expanded configuration.
 type PluginConfigurationValidator interface {
- ValidatePluginConfiguration(*config.Plugins) error
+	ValidatePluginConfiguration(*config.Plugins) error
 }

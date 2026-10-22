@@ -62,6 +62,11 @@ func (in KubeSchedulerProfile) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in NamespaceResourceGuaranteeArgs) OpenAPIModelName() string {
+	return "io.k8s.kube-scheduler.config.v1.NamespaceResourceGuaranteeArgs"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in NodeAffinityArgs) OpenAPIModelName() string {
 	return "io.k8s.kube-scheduler.config.v1.NodeAffinityArgs"
 }

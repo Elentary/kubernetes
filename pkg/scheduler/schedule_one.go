@@ -140,7 +140,7 @@ func (sched *Scheduler) ScheduleOne(ctx context.Context) {
 	}()
 }
 
-var clearNominatedNode = &fwk.NominatingInfo{NominatingMode: fwk.ModeOverride, NominatedNodeName: ""}
+var clearNominatedNode = &fwkapi.NominatingInfo{NominatingMode: fwkapi.ModeOverride, NominatedNodeName: ""}
 
 // schedulingCycle tries to schedule a single Pod.
 func (sched *Scheduler) schedulingCycle(
@@ -254,9 +254,9 @@ func (sched *Scheduler) bindingCycle(
 		if preFlightStatus.IsSuccess() || schedFramework.WillWaitOnPermit(ctx, assumedPod) {
 			// Add NominatedNodeName to tell the external components (e.g., the cluster autoscaler) that the pod is about to be bound to the node.
 			// We only do this when any of WaitOnPermit or PreBind will work because otherwise the pod will be soon bound anyway.
-			if err := updatePod(ctx, sched.client, schedFramework.APICacher(), assumedPod, nil, &fwk.NominatingInfo{
+			if err := updatePod(ctx, sched.client, schedFramework.APICacher(), assumedPod, nil, &fwkapi.NominatingInfo{
 				NominatedNodeName: scheduleResult.SuggestedHost,
-				NominatingMode:    fwk.ModeOverride,
+				NominatingMode:    fwkapi.ModeOverride,
 			}); err != nil {
 				logger.Error(err, "Failed to update the nominated node name in the binding cycle", "pod", klog.KObj(assumedPod), "nominatedNodeName", scheduleResult.SuggestedHost)
 				// We continue the processing because it's not critical enough to stop binding cycles here.
@@ -388,13 +388,13 @@ func (sched *Scheduler) schedulePodWithPostFilter(ctx context.Context, fwk frame
 	for retries := 0; err != nil; retries++ {
 		if err == ErrNoNodesAvailable {
 			status := fwkapi.NewStatus(fwkapi.UnschedulableAndUnresolvable).WithError(err)
-			return ScheduleResult{nominatingInfo: sched.newFailureNominatingInfo()}, status
+			return ScheduleResult{nominatingInfo: clearNominatedNode}, status
 		}
 
 		fitError, ok := err.(*framework.FitError)
 		if !ok {
 			logger.Error(err, "Error selecting node for pod", "pod", klog.KObj(pod))
-			return ScheduleResult{nominatingInfo: sched.newFailureNominatingInfo()}, fwkapi.AsStatus(err)
+			return ScheduleResult{nominatingInfo: clearNominatedNode}, fwkapi.AsStatus(err)
 		}
 
 		// SchedulePod() may have failed because the pod would not fit on any host, so we try to
@@ -404,7 +404,7 @@ func (sched *Scheduler) schedulePodWithPostFilter(ctx context.Context, fwk frame
 
 		if !fwk.HasPostFilterPlugins() {
 			logger.V(3).Info("No PostFilter plugins are registered, so no preemption will be performed")
-			return ScheduleResult{}, fwkapi.NewStatus(fwkapi.Unschedulable).WithError(err)
+			return ScheduleResult{nominatingInfo: clearNominatedNode}, fwkapi.NewStatus(fwkapi.Unschedulable).WithError(err)
 		}
 
 		// Run PostFilter plugins to attempt to make the pod schedulable in a future scheduling cycle.
@@ -414,7 +414,7 @@ func (sched *Scheduler) schedulePodWithPostFilter(ctx context.Context, fwk frame
 				return ScheduleResult{}, fwkapi.NewStatus(fwkapi.Error, "invalid or repeated scheduling retry")
 			}
 			if err := ctx.Err(); err != nil {
-				return ScheduleResult{nominatingInfo: sched.newFailureNominatingInfo()}, fwkapi.AsStatus(err)
+				return ScheduleResult{nominatingInfo: clearNominatedNode}, fwkapi.AsStatus(err)
 			}
 			framework.SetSchedulingRetry(state, true)
 			scheduleResult, err = sched.SchedulePod(ctx, fwk, state, pod)
@@ -428,7 +428,7 @@ func (sched *Scheduler) schedulePodWithPostFilter(ctx context.Context, fwk frame
 			logger.V(5).Info("Status after running PostFilter plugins for pod", "pod", klog.KObj(pod), "status", msg)
 		}
 
-		var nominatingInfo *framework.NominatingInfo
+		var nominatingInfo *fwkapi.NominatingInfo
 		if result != nil {
 			nominatingInfo = result.NominatingInfo
 		}
@@ -598,7 +598,7 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, schedFramework 
 	}
 
 	var nodeHint string
-	var signature fwk.PodSignature
+	var signature fwkapi.PodSignature
 	if utilfeature.DefaultFeatureGate.Enabled(features.OpportunisticBatching) {
 		// We get the node hint even if we have a nominated name for simplicity, but we could potentially avoid it
 		// in this scenario in the future.
@@ -615,15 +615,17 @@ func (sched *Scheduler) findNodesThatFitPod(ctx context.Context, schedFramework 
 	// "NominatedNodeName" can potentially be set in a previous scheduling cycle as a result of preemption.
 	// This node is likely the only candidate that will fit the pod, and hence we try it first before iterating over all nodes.
 	// Apply the ordinary-node preference to both nomination and batching hints.
- candidateName := pod.Status.NominatedNodeName
- if candidateName == "" { candidateName = nodeHint }
- tryNomination := candidateName != ""
- if preference := framework.NodeResourcePreferenceFromState(state); preference != nil && tryNomination {
-  node, err := sched.nodeInfoSnapshot.Get(candidateName)
-  tryNomination = err == nil && !framework.NodeHasResource(node.Node(), preference.Resource)
- }
- if tryNomination {
-  feasibleNodes, err := sched.evaluateNominatedNode(ctx, pod, schedFramework, state, nodeHint, diagnosis)
+	candidateName := pod.Status.NominatedNodeName
+	if candidateName == "" {
+		candidateName = nodeHint
+	}
+	tryNomination := candidateName != ""
+	if preference := framework.NodeResourcePreferenceFromState(state); preference != nil && tryNomination {
+		node, err := sched.nodeInfoSnapshot.Get(candidateName)
+		tryNomination = err == nil && !framework.NodeHasResource(node.Node(), preference.Resource)
+	}
+	if tryNomination {
+		feasibleNodes, err := sched.evaluateNominatedNode(ctx, pod, schedFramework, state, nodeHint, diagnosis)
 		if err != nil {
 			utilruntime.HandleErrorWithContext(ctx, err, "Evaluation failed on nominated node", "pod", klog.KObj(pod), "node", pod.Status.NominatedNodeName)
 		}
@@ -1121,7 +1123,7 @@ func findNodesThatPassExtenders(ctx context.Context, extenders []fwkapi.Extender
 // All scores are finally combined (added) to get the total weighted scores of all nodes
 func prioritizeNodes(
 	ctx context.Context,
-	extenders []fwk.Extender,
+	extenders []fwkapi.Extender,
 	schedFramework framework.Framework,
 	state fwkapi.CycleState,
 	pod *v1.Pod,
@@ -1131,9 +1133,9 @@ func prioritizeNodes(
 	// If no priority configs are provided, then all nodes will have a score of one.
 	// This is required to generate the priority list in the required format
 	if len(extenders) == 0 && !schedFramework.HasScorePlugins() {
-		result := make([]fwk.NodePluginScores, 0, len(nodes))
+		result := make([]fwkapi.NodePluginScores, 0, len(nodes))
 		for i := range nodes {
-			result = append(result, fwk.NodePluginScores{
+			result = append(result, fwkapi.NodePluginScores{
 				Name:       nodes[i].Node().Name,
 				TotalScore: 1,
 			})
@@ -1175,7 +1177,7 @@ func prioritizeNodes(
 	if len(extenders) != 0 && nodes != nil {
 		// allNodeExtendersScores has all extenders scores for all nodes.
 		// It is keyed with node name.
-		allNodeExtendersScores := make(map[string]*fwk.NodePluginScores, len(nodes))
+		allNodeExtendersScores := make(map[string]*fwkapi.NodePluginScores, len(nodes))
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 		for i := range extenders {
@@ -1214,15 +1216,15 @@ func prioritizeNodes(
 
 					// MaxExtenderPriority may diverge from the max priority used in the scheduler and defined by MaxNodeScore,
 					// therefore we need to scale the score returned by extenders to the score range used by the scheduler.
-					finalscore := score * weight * (fwk.MaxNodeScore / extenderv1.MaxExtenderPriority)
+					finalscore := score * weight * (fwkapi.MaxNodeScore / extenderv1.MaxExtenderPriority)
 
 					if allNodeExtendersScores[nodename] == nil {
-						allNodeExtendersScores[nodename] = &fwk.NodePluginScores{
+						allNodeExtendersScores[nodename] = &fwkapi.NodePluginScores{
 							Name:   nodename,
-							Scores: make([]fwk.PluginScore, 0, len(extenders)),
+							Scores: make([]fwkapi.PluginScore, 0, len(extenders)),
 						}
 					}
-					allNodeExtendersScores[nodename].Scores = append(allNodeExtendersScores[nodename].Scores, fwk.PluginScore{
+					allNodeExtendersScores[nodename].Scores = append(allNodeExtendersScores[nodename].Scores, fwkapi.PluginScore{
 						Name:  extenders[extIndex].Name(),
 						Score: finalscore,
 					})
@@ -1260,20 +1262,20 @@ type sortedNodeScores struct {
 	nodes nodeScoreHeap
 }
 
-func newSortedNodeScores(nodeScoreList []fwk.NodePluginScores) *sortedNodeScores {
+func newSortedNodeScores(nodeScoreList []fwkapi.NodePluginScores) *sortedNodeScores {
 	var h nodeScoreHeap = nodeScoreList
 	heap.Init(&h)
 	return &sortedNodeScores{nodes: h}
 }
 
 func (s *sortedNodeScores) Pop() string {
-	ent := heap.Pop(&s.nodes).(fwk.NodePluginScores)
+	ent := heap.Pop(&s.nodes).(fwkapi.NodePluginScores)
 	return ent.Name
 }
 
 // Used only for unit tests.
-func (s *sortedNodeScores) PopScore() fwk.NodePluginScores {
-	ent := heap.Pop(&s.nodes).(fwk.NodePluginScores)
+func (s *sortedNodeScores) PopScore() fwkapi.NodePluginScores {
+	ent := heap.Pop(&s.nodes).(fwkapi.NodePluginScores)
 	return ent
 }
 
@@ -1281,8 +1283,8 @@ func (s *sortedNodeScores) Len() int {
 	return s.nodes.Len()
 }
 
-// nodeScoreHeap is a heap of fwk.NodePluginScores.
-type nodeScoreHeap []fwk.NodePluginScores
+// nodeScoreHeap is a heap of fwkapi.NodePluginScores.
+type nodeScoreHeap []fwkapi.NodePluginScores
 
 // nodeScoreHeap implements heap.Interface.
 var _ heap.Interface = &nodeScoreHeap{}
@@ -1295,7 +1297,7 @@ func (h nodeScoreHeap) Less(i, j int) bool {
 func (h nodeScoreHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
 
 func (h *nodeScoreHeap) Push(x interface{}) {
-	*h = append(*h, x.(fwk.NodePluginScores))
+	*h = append(*h, x.(fwkapi.NodePluginScores))
 }
 
 func (h *nodeScoreHeap) Pop() interface{} {
@@ -1487,7 +1489,7 @@ func truncateMessage(message string) string {
 	return message[:max-len(suffix)] + suffix
 }
 
-func updatePod(ctx context.Context, client clientset.Interface, apiCacher fwk.APICacher, pod *v1.Pod, condition *v1.PodCondition, nominatingInfo *fwk.NominatingInfo) error {
+func updatePod(ctx context.Context, client clientset.Interface, apiCacher fwkapi.APICacher, pod *v1.Pod, condition *v1.PodCondition, nominatingInfo *fwkapi.NominatingInfo) error {
 	if apiCacher != nil {
 		// When API cacher is available, use it to patch the status.
 		_, err := apiCacher.PatchPodStatus(pod, condition, nominatingInfo)
@@ -1506,7 +1508,7 @@ func updatePod(ctx context.Context, client clientset.Interface, apiCacher fwk.AP
 	podStatusCopy := pod.Status.DeepCopy()
 	// NominatedNodeName is updated only if we are trying to set it, and the value is
 	// different from the existing one.
-	nnnNeedsUpdate := nominatingInfo.Mode() == fwk.ModeOverride && pod.Status.NominatedNodeName != nominatingInfo.NominatedNodeName
+	nnnNeedsUpdate := nominatingInfo.Mode() == fwkapi.ModeOverride && pod.Status.NominatedNodeName != nominatingInfo.NominatedNodeName
 	podConditionNeedsUpdate := condition != nil && podutil.UpdatePodCondition(podStatusCopy, condition)
 	if !podConditionNeedsUpdate && !nnnNeedsUpdate {
 		return nil

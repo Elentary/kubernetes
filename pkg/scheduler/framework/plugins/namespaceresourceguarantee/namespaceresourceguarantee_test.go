@@ -40,7 +40,7 @@ import (
 	"k8s.io/klog/v2"
 	ktesting "k8s.io/klog/v2/ktesting"
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
-	fwk "k8s.io/kube-scheduler/framework"
+	fwkapi "k8s.io/kube-scheduler/framework"
 	corevalidation "k8s.io/kubernetes/pkg/apis/core/validation"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
@@ -67,7 +67,7 @@ func TestPreFilter(t *testing.T) {
 		pod          *v1.Pod
 		existingPods []*v1.Pod
 		nodes        []*v1.Node
-		wantCode     fwk.Code
+		wantCode     fwkapi.Code
 		wantMessage  string
 	}{
 		{
@@ -89,7 +89,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: fwk.Success,
+			wantCode: fwkapi.Success,
 		},
 		{
 			name: "protected pod exceeding cpu guarantee fails",
@@ -107,7 +107,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    fwk.UnschedulableAndUnresolvable,
+			wantCode:    fwkapi.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=3000 requested=1500`,
 		},
 		{
@@ -121,7 +121,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceCPU: "100m",
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    fwk.UnschedulableAndUnresolvable,
+			wantCode:    fwkapi.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
 		},
 		{
@@ -140,7 +140,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceMemory: "4Gi",
 			}),
 			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: fwk.Success,
+			wantCode: fwkapi.Success,
 		},
 		{
 			name: "configured namespace still caps its listed resource",
@@ -162,7 +162,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    fwk.UnschedulableAndUnresolvable,
+			wantCode:    fwkapi.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-b" shared protected resource guarantee exceeded: resource="cpu" guarantee=1000 current=1000 requested=1000`,
 		},
 		{
@@ -179,7 +179,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceCPU: "100m",
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    fwk.UnschedulableAndUnresolvable,
+			wantCode:    fwkapi.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=100`,
 		},
 		{
@@ -193,7 +193,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceCPU: "8",
 			}),
 			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: fwk.Success,
+			wantCode: fwkapi.Success,
 		},
 		{
 			name: "protected pod requesting non-configured resource bypasses cap accounting",
@@ -206,7 +206,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceName("nvidia.com/gpu"): "8",
 			}),
 			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: fwk.Success,
+			wantCode: fwkapi.Success,
 		},
 		{
 			name: "only same namespace protected pods are counted",
@@ -223,7 +223,7 @@ func TestPreFilter(t *testing.T) {
 				makePodWithRequests("normal", "team-a", "normal", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "8"}),
 			},
 			nodes:    []*v1.Node{makeNode("node-a")},
-			wantCode: fwk.Success,
+			wantCode: fwkapi.Success,
 		},
 		{
 			name: "protected pod exceeding gpu guarantee fails",
@@ -241,7 +241,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    fwk.UnschedulableAndUnresolvable,
+			wantCode:    fwkapi.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="nvidia.com/gpu" guarantee=3 current=2 requested=2`,
 		},
 		{
@@ -261,7 +261,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    fwk.UnschedulableAndUnresolvable,
+			wantCode:    fwkapi.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=5000 requested=3000`,
 		},
 		{
@@ -281,7 +281,7 @@ func TestPreFilter(t *testing.T) {
 				}),
 			},
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    fwk.UnschedulableAndUnresolvable,
+			wantCode:    fwkapi.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-a" shared protected resource guarantee exceeded: resource="cpu" guarantee=4000 current=5000 requested=3000`,
 		},
 		{
@@ -293,7 +293,7 @@ func TestPreFilter(t *testing.T) {
 				v1.ResourceCPU: "1",
 			}),
 			nodes:       []*v1.Node{makeNode("node-a")},
-			wantCode:    fwk.UnschedulableAndUnresolvable,
+			wantCode:    fwkapi.UnschedulableAndUnresolvable,
 			wantMessage: `namespace "team-b" shared protected resource guarantee exceeded: resource="cpu" guarantee=0 current=0 requested=1000`,
 		},
 	}
@@ -306,7 +306,7 @@ func TestPreFilter(t *testing.T) {
 			plugin := plugintesting.SetupPlugin(ctx, t, New, &tt.args, internalcache.NewSnapshot(tt.existingPods, tt.nodes)).(*NamespaceResourceGuarantee)
 			_, status := plugin.PreFilter(ctx, framework.NewCycleState(), tt.pod, nil)
 			if status == nil {
-				status = fwk.NewStatus(fwk.Success)
+				status = fwkapi.NewStatus(fwkapi.Success)
 			}
 			if status.Code() != tt.wantCode {
 				t.Fatalf("unexpected status code: got %v, want %v", status.Code(), tt.wantCode)
@@ -329,7 +329,7 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 		victimPriority   int32
 		allocatableCPU   string
 		wantVictimNames  []string
-		wantStatusCode   fwk.Code
+		wantStatusCode   fwkapi.Code
 	}
 	tests := []testCase{
 		{
@@ -339,7 +339,7 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 			victimNamespaces: []string{"team-b", "unmanaged"},
 			allocatableCPU:   "2",
 			wantVictimNames:  []string{"victim-0"},
-			wantStatusCode:   fwk.Success,
+			wantStatusCode:   fwkapi.Success,
 		},
 		{
 			name:             "semi-guaranteed preemptor selects only managed namespace victims when restricted",
@@ -348,7 +348,7 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 			victimNamespaces: []string{"team-b", "unmanaged"},
 			allocatableCPU:   "2",
 			wantVictimNames:  []string{"victim-0"},
-			wantStatusCode:   fwk.Success,
+			wantStatusCode:   fwkapi.Success,
 		},
 	}
 
@@ -373,11 +373,11 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 					victimNamespaces: []string{namespace},
 					allocatableCPU:   "1",
 					wantVictimNames:  []string{"victim-0"},
-					wantStatusCode:   fwk.Success,
+					wantStatusCode:   fwkapi.Success,
 				}
 				if namespace == "unmanaged" && restriction.wantRestricted[i] {
 					tt.wantVictimNames = nil
-					tt.wantStatusCode = fwk.UnschedulableAndUnresolvable
+					tt.wantStatusCode = fwkapi.UnschedulableAndUnresolvable
 				}
 				tests = append(tests, tt)
 			}
@@ -393,7 +393,7 @@ func TestSelectVictimsOnNodeRespectsManagedNamespaceRestriction(t *testing.T) {
 					victimNamespaces: []string{"team-b"},
 					victimPriority:   priority,
 					allocatableCPU:   "1",
-					wantStatusCode:   fwk.UnschedulableAndUnresolvable,
+					wantStatusCode:   fwkapi.UnschedulableAndUnresolvable,
 				})
 			}
 		}
@@ -471,7 +471,7 @@ func TestPreFilterMetrics(t *testing.T) {
 	args := tieredArgs(map[string]v1.ResourceList{
 		"team-a": {v1.ResourceCPU: resource.MustParse("4")},
 	})
-	newPlugin := func(t *testing.T, lister framework.SharedLister) *NamespaceResourceGuarantee {
+	newPlugin := func(t *testing.T, lister fwkapi.SharedLister) *NamespaceResourceGuarantee {
 		t.Helper()
 		fh, err := frameworkruntime.NewFramework(
 			ctx,
@@ -498,13 +498,13 @@ func TestPreFilterMetrics(t *testing.T) {
 	existing := makePodWithRequests("running", "team-a", "protected", "node-a", map[v1.ResourceName]string{v1.ResourceCPU: "3"})
 	exceeded := makePodWithRequests("exceeded", "team-a", "semi", "", map[v1.ResourceName]string{v1.ResourceCPU: "2"})
 	exceededPlugin := newPlugin(t, internalcache.NewSnapshot([]*v1.Pod{existing}, []*v1.Node{makeNode("node-a")}))
-	if _, status := exceededPlugin.PreFilter(ctx, framework.NewCycleState(), exceeded, nil); status == nil || status.Code() != fwk.UnschedulableAndUnresolvable {
+	if _, status := exceededPlugin.PreFilter(ctx, framework.NewCycleState(), exceeded, nil); status == nil || status.Code() != fwkapi.UnschedulableAndUnresolvable {
 		t.Fatalf("expected quota-exceeded status, got %v", status)
 	}
 
 	failed := makePodWithRequests("failed", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
 	failedPlugin := newPlugin(t, errorSharedLister{})
-	if _, status := failedPlugin.PreFilter(ctx, framework.NewCycleState(), failed, nil); status == nil || status.Code() != fwk.Error {
+	if _, status := failedPlugin.PreFilter(ctx, framework.NewCycleState(), failed, nil); status == nil || status.Code() != fwkapi.Error {
 		t.Fatalf("expected error status, got %v", status)
 	}
 
@@ -580,10 +580,10 @@ func TestEventsToRegister(t *testing.T) {
 		events[i].QueueingHintFn = nil
 	}
 
-	expected := []fwk.ClusterEventWithHint{
-		{Event: fwk.ClusterEvent{Resource: fwk.Pod, ActionType: fwk.Delete | fwk.UpdatePodScaleDown}},
+	expected := []fwkapi.ClusterEventWithHint{
+		{Event: fwkapi.ClusterEvent{Resource: fwkapi.Pod, ActionType: fwkapi.Delete | fwkapi.UpdatePodScaleDown}},
 	}
-	if diff := cmp.Diff(expected, events, cmpopts.EquateComparable(fwk.ClusterEvent{})); diff != "" {
+	if diff := cmp.Diff(expected, events, cmpopts.EquateComparable(fwkapi.ClusterEvent{})); diff != "" {
 		t.Fatalf("unexpected events (-want,+got):\n%s", diff)
 	}
 }
@@ -759,7 +759,7 @@ func TestLogPreemptionDecisionEmitsCandidateScoreLogs(t *testing.T) {
 	trace := &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{
 		"node-a": {
 			nodeName:              "node-a",
-			statusCode:            fwk.Success,
+			statusCode:            fwkapi.Success,
 			numPDBViolatingVictim: 1,
 			victims:               []*v1.Pod{victim},
 			packingScore: &preemptionCandidatePackingScore{
@@ -775,7 +775,7 @@ func TestLogPreemptionDecisionEmitsCandidateScoreLogs(t *testing.T) {
 	plugin.preemptionTrace.Store(pod.UID, trace)
 	defer plugin.preemptionTrace.Delete(pod.UID)
 
-	plugin.logPreemptionDecision(tCtx, state, pod, framework.NewPostFilterResultWithNominatedNode("node-a"), fwk.NewStatus(fwk.Success))
+	plugin.logPreemptionDecision(tCtx, state, pod, framework.NewPostFilterResultWithNominatedNode("node-a"), fwkapi.NewStatus(fwkapi.Success))
 
 	output := tCtx.Logger().GetSink().(testktesting.Underlier).GetBuffer().String()
 	wantSubstrings := []string{
@@ -805,7 +805,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 		targetPod    *v1.Pod
 		oldObj       interface{}
 		newObj       interface{}
-		expectedHint fwk.QueueingHint
+		expectedHint fwkapi.QueueingHint
 		expectErr    bool
 	}{
 		{
@@ -816,7 +816,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			oldObj: makePodWithRequests("running", "team-a", "protected", "node-a", map[v1.ResourceName]string{
 				v1.ResourceCPU: "2",
 			}),
-			expectedHint: fwk.Queue,
+			expectedHint: fwkapi.Queue,
 		},
 		{
 			name: "same namespace semi-guaranteed cpu pod deleted",
@@ -826,7 +826,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			oldObj: makePodWithRequests("running", "team-a", "semi", "node-a", map[v1.ResourceName]string{
 				v1.ResourceCPU: "2",
 			}),
-			expectedHint: fwk.Queue,
+			expectedHint: fwkapi.Queue,
 		},
 		{
 			name: "other namespace protected cpu pod deleted",
@@ -836,7 +836,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			oldObj: makePodWithRequests("running", "team-b", "protected", "node-a", map[v1.ResourceName]string{
 				v1.ResourceCPU: "2",
 			}),
-			expectedHint: fwk.QueueSkip,
+			expectedHint: fwkapi.QueueSkip,
 		},
 		{
 			name: "same namespace normal pod deleted",
@@ -846,7 +846,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			oldObj: makePodWithRequests("running", "team-a", "normal", "node-a", map[v1.ResourceName]string{
 				v1.ResourceCPU: "2",
 			}),
-			expectedHint: fwk.QueueSkip,
+			expectedHint: fwkapi.QueueSkip,
 		},
 		{
 			name: "target pod scaled down memory",
@@ -859,7 +859,7 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			newObj: makePodWithRequestsAndUID("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
 				v1.ResourceMemory: "1Gi",
 			}, "incoming-uid"),
-			expectedHint: fwk.Queue,
+			expectedHint: fwkapi.Queue,
 		},
 		{
 			name: "target pod update with same requests",
@@ -872,13 +872,13 @@ func TestIsSchedulableAfterPodChange(t *testing.T) {
 			newObj: makePodWithRequestsAndUID("incoming", "team-a", "protected", "", map[v1.ResourceName]string{
 				v1.ResourceCPU: "1",
 			}, "incoming-uid"),
-			expectedHint: fwk.QueueSkip,
+			expectedHint: fwkapi.QueueSkip,
 		},
 		{
 			name:         "wrong object type returns error and queues",
 			targetPod:    makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
 			oldObj:       "not-a-pod",
-			expectedHint: fwk.Queue,
+			expectedHint: fwkapi.Queue,
 			expectErr:    true,
 		},
 	}
@@ -967,8 +967,8 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 	tests := []struct {
 		name                string
 		pod                 *v1.Pod
-		result              *framework.PostFilterResult
-		status              *fwk.Status
+		result              *fwkapi.PostFilterResult
+		status              *fwkapi.Status
 		trace               *preemptionDecisionTrace
 		wantEventType       string
 		wantReason          string
@@ -979,7 +979,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 			name:          "started event says initiated not completed",
 			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
 			result:        framework.NewPostFilterResultWithNominatedNode("node-a"),
-			status:        fwk.NewStatus(fwk.Success),
+			status:        fwkapi.NewStatus(fwkapi.Success),
 			trace:         traceWithVictims,
 			wantEventType: v1.EventTypeNormal,
 			wantReason:    preemptionStartedReason,
@@ -997,7 +997,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 				p.Status.NominatedNodeName = "node-b"
 				return p
 			}(),
-			status:        fwk.NewStatus(fwk.Unschedulable, preemptionWaitingOnTerminatingVictims),
+			status:        fwkapi.NewStatus(fwkapi.Unschedulable, preemptionWaitingOnTerminatingVictims),
 			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
 			wantEventType: v1.EventTypeNormal,
 			wantReason:    preemptionWaitingReason,
@@ -1011,7 +1011,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 		{
 			name:          "not helpful event is explicit",
 			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
-			status:        fwk.NewStatus(fwk.Unschedulable, "0/10 nodes are available: 10 Preemption is not helpful for scheduling."),
+			status:        fwkapi.NewStatus(fwkapi.Unschedulable, "0/10 nodes are available: 10 Preemption is not helpful for scheduling."),
 			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
 			wantEventType: v1.EventTypeNormal,
 			wantReason:    preemptionNotHelpfulReason,
@@ -1023,7 +1023,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 		{
 			name:          "no candidate event is explicit",
 			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
-			status:        fwk.NewStatus(fwk.Unschedulable, preemptionNoCandidateMessage),
+			status:        fwkapi.NewStatus(fwkapi.Unschedulable, preemptionNoCandidateMessage),
 			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
 			wantEventType: v1.EventTypeNormal,
 			wantReason:    preemptionNoCandidateReason,
@@ -1035,7 +1035,7 @@ func TestClassifyPreemptionEvent(t *testing.T) {
 		{
 			name:          "error event is warning",
 			pod:           makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
-			status:        fwk.NewStatus(fwk.Error, "boom"),
+			status:        fwkapi.NewStatus(fwkapi.Error, "boom"),
 			trace:         &preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{}},
 			wantEventType: v1.EventTypeWarning,
 			wantReason:    preemptionErrorReason,
@@ -1085,7 +1085,7 @@ func TestClassifyPreemptionEventSummarizesLongVictimList(t *testing.T) {
 	event := classifyPreemptionEvent(
 		makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"}),
 		framework.NewPostFilterResultWithNominatedNode("node-a"),
-		fwk.NewStatus(fwk.Success),
+		fwkapi.NewStatus(fwkapi.Success),
 		&preemptionDecisionTrace{nodes: map[string]*nodePreemptionTrace{
 			"node-a": {
 				nodeName: "node-a",
@@ -1128,7 +1128,7 @@ func TestLogPreemptionDecisionEmitsEvent(t *testing.T) {
 	plugin.preemptionTrace.Store(pod.UID, trace)
 	defer plugin.preemptionTrace.Delete(pod.UID)
 
-	plugin.logPreemptionDecision(context.Background(), framework.NewCycleState(), pod, nil, fwk.NewStatus(fwk.Unschedulable, preemptionWaitingOnTerminatingVictims))
+	plugin.logPreemptionDecision(context.Background(), framework.NewCycleState(), pod, nil, fwkapi.NewStatus(fwkapi.Unschedulable, preemptionWaitingOnTerminatingVictims))
 
 	select {
 	case event := <-recorder.Events:
@@ -1267,7 +1267,7 @@ func testPostFilterEmitsStartedEventEndToEnd(t *testing.T) {
 	}
 
 	nodeToStatus := framework.NewDefaultNodeToStatus()
-	nodeToStatus.Set("node-a", fwk.NewStatus(fwk.Unschedulable))
+	nodeToStatus.Set("node-a", fwkapi.NewStatus(fwkapi.Unschedulable))
 
 	result, status := plugin.PostFilter(ctx, state, preemptor, nodeToStatus)
 	if !status.IsSuccess() {
@@ -1441,39 +1441,39 @@ func ptrTo[T any](v T) *T {
 
 type noopPodNominator struct{}
 
-func (noopPodNominator) AddNominatedPod(klog.Logger, fwk.PodInfo, *framework.NominatingInfo) {}
+func (noopPodNominator) AddNominatedPod(klog.Logger, fwkapi.PodInfo, *fwkapi.NominatingInfo) {}
 
 func (noopPodNominator) DeleteNominatedPodIfExists(*v1.Pod) {}
 
-func (noopPodNominator) UpdateNominatedPod(klog.Logger, *v1.Pod, fwk.PodInfo) {}
+func (noopPodNominator) UpdateNominatedPod(klog.Logger, *v1.Pod, fwkapi.PodInfo) {}
 
-func (noopPodNominator) NominatedPodsForNode(string) []fwk.PodInfo { return nil }
+func (noopPodNominator) NominatedPodsForNode(string) []fwkapi.PodInfo { return nil }
 
 type errorSharedLister struct{}
 
-func (errorSharedLister) NodeInfos() framework.NodeInfoLister {
+func (errorSharedLister) NodeInfos() fwkapi.NodeInfoLister {
 	return errorNodeInfoLister{}
 }
 
-func (errorSharedLister) StorageInfos() framework.StorageInfoLister {
+func (errorSharedLister) StorageInfos() fwkapi.StorageInfoLister {
 	return nil
 }
 
 type errorNodeInfoLister struct{}
 
-func (errorNodeInfoLister) List() ([]fwk.NodeInfo, error) {
+func (errorNodeInfoLister) List() ([]fwkapi.NodeInfo, error) {
 	return nil, errors.New("snapshot list failed")
 }
 
-func (errorNodeInfoLister) HavePodsWithAffinityList() ([]fwk.NodeInfo, error) {
+func (errorNodeInfoLister) HavePodsWithAffinityList() ([]fwkapi.NodeInfo, error) {
 	return nil, errors.New("snapshot list failed")
 }
 
-func (errorNodeInfoLister) HavePodsWithRequiredAntiAffinityList() ([]fwk.NodeInfo, error) {
+func (errorNodeInfoLister) HavePodsWithRequiredAntiAffinityList() ([]fwkapi.NodeInfo, error) {
 	return nil, errors.New("snapshot list failed")
 }
 
-func (errorNodeInfoLister) Get(string) (fwk.NodeInfo, error) {
+func (errorNodeInfoLister) Get(string) (fwkapi.NodeInfo, error) {
 	return nil, errors.New("snapshot get failed")
 }
 
@@ -1491,7 +1491,7 @@ func TestSyncNominatedNodeReservationLifecycle(t *testing.T) {
 	preemptor := makePodWithRequests("incoming", "team-a", "protected", "", map[v1.ResourceName]string{v1.ResourceCPU: "1"})
 	result := framework.NewPostFilterResultWithNominatedNode("node-a")
 
-	plugin.syncNominatedNodeReservation(context.Background(), preemptor, result, fwk.NewStatus(fwk.Success))
+	plugin.syncNominatedNodeReservation(context.Background(), preemptor, result, fwkapi.NewStatus(fwkapi.Success))
 
 	reservation, ok := nominatednodereservation.SharedStore().Get("node-a")
 	if !ok {
@@ -1514,7 +1514,7 @@ func TestSyncNominatedNodeReservationLifecycle(t *testing.T) {
 		context.Background(),
 		preemptor,
 		nil,
-		fwk.NewStatus(fwk.Unschedulable, preemptionNoCandidateMessage),
+		fwkapi.NewStatus(fwkapi.Unschedulable, preemptionNoCandidateMessage),
 	)
 
 	if _, ok := nominatednodereservation.SharedStore().Get("node-a"); ok {

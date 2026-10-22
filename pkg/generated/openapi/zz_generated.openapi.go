@@ -1433,6 +1433,7 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		configv1.InterPodAffinityArgs{}.OpenAPIModelName():                                                              schema_k8sio_kube_scheduler_config_v1_InterPodAffinityArgs(ref),
 		configv1.KubeSchedulerConfiguration{}.OpenAPIModelName():                                                        schema_k8sio_kube_scheduler_config_v1_KubeSchedulerConfiguration(ref),
 		configv1.KubeSchedulerProfile{}.OpenAPIModelName():                                                              schema_k8sio_kube_scheduler_config_v1_KubeSchedulerProfile(ref),
+		configv1.NamespaceResourceGuaranteeArgs{}.OpenAPIModelName():                                                    schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref),
 		configv1.NodeAffinityArgs{}.OpenAPIModelName():                                                                  schema_k8sio_kube_scheduler_config_v1_NodeAffinityArgs(ref),
 		configv1.NodeResourcesBalancedAllocationArgs{}.OpenAPIModelName():                                               schema_k8sio_kube_scheduler_config_v1_NodeResourcesBalancedAllocationArgs(ref),
 		configv1.NodeResourcesFitArgs{}.OpenAPIModelName():                                                              schema_k8sio_kube_scheduler_config_v1_NodeResourcesFitArgs(ref),
@@ -1509,7 +1510,6 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		metricsv1beta1.NodeMetricsList{}.OpenAPIModelName():                                                             schema_pkg_apis_metrics_v1beta1_NodeMetricsList(ref),
 		metricsv1beta1.PodMetrics{}.OpenAPIModelName():                                                                  schema_pkg_apis_metrics_v1beta1_PodMetrics(ref),
 		metricsv1beta1.PodMetricsList{}.OpenAPIModelName():                                                              schema_pkg_apis_metrics_v1beta1_PodMetricsList(ref),
-		"k8s.io/kube-scheduler/config/v1.NamespaceResourceGuaranteeArgs":                                        schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref),
 	}
 }
 
@@ -69568,7 +69568,7 @@ func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref co
 											Allows: true,
 											Schema: &spec.Schema{
 												SchemaProps: spec.SchemaProps{
-													Ref: ref("k8s.io/apimachinery/pkg/api/resource.Quantity"),
+													Ref: ref(resource.Quantity{}.OpenAPIModelName()),
 												},
 											},
 										},
@@ -69608,7 +69608,7 @@ func schema_k8sio_kube_scheduler_config_v1_NamespaceResourceGuaranteeArgs(ref co
 			},
 		},
 		Dependencies: []string{
-			"k8s.io/apimachinery/pkg/api/resource.Quantity"},
+			resource.Quantity{}.OpenAPIModelName()},
 	}
 }
 

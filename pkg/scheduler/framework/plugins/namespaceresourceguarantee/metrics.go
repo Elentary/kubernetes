@@ -17,11 +17,11 @@ limitations under the License.
 package namespaceresourceguarantee
 
 import (
+	fwkapi "k8s.io/kube-scheduler/framework"
 	"sync"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/component-base/metrics"
-	"k8s.io/kubernetes/pkg/scheduler/framework"
 	schedmetrics "k8s.io/kubernetes/pkg/scheduler/metrics"
 )
 
@@ -200,7 +200,7 @@ func resourceUnit(resourceName v1.ResourceName) string {
 	}
 }
 
-func profileName(handle framework.Handle) string {
+func profileName(handle fwkapi.Handle) string {
 	if handle == nil {
 		return ""
 	}

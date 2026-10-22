@@ -328,7 +328,7 @@ func (ev *Evaluator) Preempt(ctx context.Context, state fwk.CycleState, pod *v1.
 
 // ExecuteCandidate performs the side effects for a previously evaluated candidate.
 // Evaluation must have completed successfully before calling this method.
-func (ev *Evaluator) ExecuteCandidate(ctx context.Context, pod *v1.Pod, bestCandidate Candidate) (*framework.PostFilterResult, *fwk.Status) {
+func (ev *Evaluator) ExecuteCandidate(ctx context.Context, pod *v1.Pod, bestCandidate Candidate) (*fwk.PostFilterResult, *fwk.Status) {
 	if err := ctx.Err(); err != nil {
 		return nil, fwk.AsStatus(err)
 	}

@@ -55,6 +55,7 @@ import (
 	frameworkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
 	tf "k8s.io/kubernetes/pkg/scheduler/testing/framework"
+	"k8s.io/utils/ptr"
 )
 
 const testGPU v1.ResourceName = "nvidia.com/gpu"
@@ -66,7 +67,7 @@ type rdmaFixture struct {
 	pods      []*v1.Pod
 	pdbs      []*policyv1.PodDisruptionBudget
 	args      config.NamespaceResourceGuaranteeArgs
-	extenders []framework.Extender
+	extenders []fwkapi.Extender
 }
 
 func rdmaPod(name, node string, priority int32) *v1.Pod {
@@ -147,7 +148,7 @@ func startRDMAFixture(t *testing.T, f *rdmaFixture) (*Scheduler, framework.Frame
 		tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 		tf.RegisterPluginAsExtensions(noderesources.Name, frameworkruntime.FactoryAdapter(feature.Features{}, noderesources.NewFit), "PreFilter", "Filter"),
 		tf.RegisterPluginAsExtensions(nodeaffinity.Name, frameworkruntime.FactoryAdapter(feature.Features{}, nodeaffinity.New), "PreFilter", "Filter"),
-		tf.RegisterPluginAsExtensions(namespaceresourceguarantee.Name, func(ctx context.Context, _ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
+		tf.RegisterPluginAsExtensions(namespaceresourceguarantee.Name, func(ctx context.Context, _ runtime.Object, handle fwkapi.Handle) (fwkapi.Plugin, error) {
 			return namespaceresourceguarantee.New(ctx, &f.args, handle)
 		}, "PreFilter", "Filter", "PostFilter"),
 		tf.RegisterPluginAsExtensions(nominatednodereservation.Name, nominatednodereservation.New, "Filter", "PostBind"),
@@ -252,21 +253,21 @@ func RDMAPlacementOrder(t *testing.T) {
 
 		{name: "filter-only extender rejects ordinary candidate", setup: func(f *rdmaFixture) {
 			f.pods = []*v1.Pod{rdmaPod("ordinary", "node1", 0)}
-			f.extenders = []framework.Extender{&rdmaFilterOnlyExtender{FakeExtender: tf.FakeExtender{Predicates: []tf.FitPredicate{tf.Node2PredicateExtender}}}}
+			f.extenders = []fwkapi.Extender{&rdmaFilterOnlyExtender{FakeExtender: tf.FakeExtender{Predicates: []tf.FitPredicate{tf.Node2PredicateExtender}}}}
 		}, host: "node2", retry: true},
 		{name: "extender cannot introduce higher priority victim", setup: func(f *rdmaFixture) {
 			high := rdmaPod("higher-priority", "node1", 2000)
 			high.Spec.Containers[0].Resources.Requests = nil
 			f.pods = []*v1.Pod{rdmaPod("ordinary", "node1", 0), high}
-			f.extenders = []framework.Extender{&rdmaAddedVictimExtender{victim: high}}
+			f.extenders = []fwkapi.Extender{&rdmaAddedVictimExtender{victim: high}}
 		}},
 		{name: "extender rejects ordinary preemption candidate", setup: func(f *rdmaFixture) {
 			f.pods = []*v1.Pod{rdmaPod("ordinary", "node1", 0)}
-			f.extenders = []framework.Extender{&tf.FakeExtender{Predicates: []tf.FitPredicate{tf.Node2PredicateExtender}}}
+			f.extenders = []fwkapi.Extender{&tf.FakeExtender{Predicates: []tf.FitPredicate{tf.Node2PredicateExtender}}}
 		}, host: "node2", retry: true},
 		{name: "extender error is not proof of no ordinary candidate", setup: func(f *rdmaFixture) {
 			f.pods = []*v1.Pod{rdmaPod("ordinary", "node1", 0)}
-			f.extenders = []framework.Extender{&tf.FakeExtender{Predicates: []tf.FitPredicate{tf.ErrorPredicateExtender}}}
+			f.extenders = []fwkapi.Extender{&tf.FakeExtender{Predicates: []tf.FitPredicate{tf.ErrorPredicateExtender}}}
 		}},
 	}
 	for _, tt := range tests {
@@ -410,7 +411,7 @@ func RDMAExhaustiveSearch(t *testing.T) {
 			f.nodes = append(f.nodes, rdmaNode("node2", true))
 			// Every native candidate fits; the extender permits only the last ordinary
 			// node. A 100-node native shortlist must not cause an RDMA fallback.
-			f.extenders = []framework.Extender{&tf.FakeExtender{Predicates: []tf.FitPredicate{func(_ *v1.Pod, node fwkapi.NodeInfo) *fwkapi.Status {
+			f.extenders = []fwkapi.Extender{&tf.FakeExtender{Predicates: []tf.FitPredicate{func(_ *v1.Pod, node fwkapi.NodeInfo) *fwkapi.Status {
 				if node.Node().Name == "ordinary-219" || node.Node().Name == "node2" {
 					return nil
 				}
@@ -462,28 +463,28 @@ func TestRDMARetryReusesSnapshot(t *testing.T) {
 
 type rdmaRetryFramework struct {
 	framework.Framework
-	result *framework.PostFilterResult
+	result *fwkapi.PostFilterResult
 	status *fwkapi.Status
 }
 
 func (f *rdmaRetryFramework) HasPostFilterPlugins() bool { return true }
-func (f *rdmaRetryFramework) RunPostFilterPlugins(context.Context, fwkapi.CycleState, *v1.Pod, framework.NodeToStatusReader) (*framework.PostFilterResult, *fwkapi.Status) {
+func (f *rdmaRetryFramework) RunPostFilterPlugins(context.Context, fwkapi.CycleState, *v1.Pod, fwkapi.NodeToStatusReader) (*fwkapi.PostFilterResult, *fwkapi.Status) {
 	return f.result, f.status
 }
 
 func TestSchedulingRetryBound(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
-		result     *framework.PostFilterResult
+		result     *fwkapi.PostFilterResult
 		status     *fwkapi.Status
 		secondFits bool
 		calls      int
 		wantError  bool
 	}{
-		{name: "one retry", result: &framework.PostFilterResult{RetryScheduling: true}, secondFits: true, calls: 2},
-		{name: "repeated retry", result: &framework.PostFilterResult{RetryScheduling: true}, calls: 2, wantError: true},
-		{name: "retry with nomination", result: &framework.PostFilterResult{RetryScheduling: true, NominatingInfo: &framework.NominatingInfo{NominatedNodeName: "node1"}}, calls: 1, wantError: true},
-		{name: "retry with failure", result: &framework.PostFilterResult{RetryScheduling: true}, status: fwkapi.NewStatus(fwkapi.Unschedulable), calls: 1, wantError: true},
+		{name: "one retry", result: &fwkapi.PostFilterResult{RetryScheduling: true}, secondFits: true, calls: 2},
+		{name: "repeated retry", result: &fwkapi.PostFilterResult{RetryScheduling: true}, calls: 2, wantError: true},
+		{name: "retry with nomination", result: &fwkapi.PostFilterResult{RetryScheduling: true, NominatingInfo: &fwkapi.NominatingInfo{NominatedNodeName: "node1"}}, calls: 1, wantError: true},
+		{name: "retry with failure", result: &fwkapi.PostFilterResult{RetryScheduling: true}, status: fwkapi.NewStatus(fwkapi.Unschedulable), calls: 1, wantError: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pod := rdmaPod("incoming", "", 1000)
@@ -513,7 +514,7 @@ type rdmaAddedVictimExtender struct {
 	victim *v1.Pod
 }
 
-func (e *rdmaAddedVictimExtender) ProcessPreemption(_ *v1.Pod, candidates map[string]*extenderv1.Victims, _ framework.NodeInfoLister) (map[string]*extenderv1.Victims, error) {
+func (e *rdmaAddedVictimExtender) ProcessPreemption(_ *v1.Pod, candidates map[string]*extenderv1.Victims, _ fwkapi.NodeInfoLister) (map[string]*extenderv1.Victims, error) {
 	for _, victims := range candidates {
 		victims.Pods = append(victims.Pods, e.victim)
 	}
@@ -525,7 +526,7 @@ type rdmaCancelingExtender struct {
 	cancel context.CancelFunc
 }
 
-func (e *rdmaCancelingExtender) ProcessPreemption(_ *v1.Pod, candidates map[string]*extenderv1.Victims, _ framework.NodeInfoLister) (map[string]*extenderv1.Victims, error) {
+func (e *rdmaCancelingExtender) ProcessPreemption(_ *v1.Pod, candidates map[string]*extenderv1.Victims, _ fwkapi.NodeInfoLister) (map[string]*extenderv1.Victims, error) {
 	e.cancel()
 	return candidates, nil
 }
@@ -534,7 +535,7 @@ func TestRDMACanceledEvaluationDoesNotEvict(t *testing.T) {
 	f := newRDMAFixture()
 	f.pods = []*v1.Pod{rdmaPod("ordinary", "node1", 0)}
 	extender := &rdmaCancelingExtender{}
-	f.extenders = []framework.Extender{extender}
+	f.extenders = []fwkapi.Extender{extender}
 	sched, fwk, cs, ctx := startRDMAFixture(t, f)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -563,11 +564,12 @@ func waitDeletedPods(t *testing.T, cs *clientsetfake.Clientset, count int) []str
 }
 
 // Extracting PostFilter for RDMA retry must preserve the upstream policy for
-// nomination after failures, including the alpha external-nomination mode.
+// nomination after failures, including the beta external-nomination mode.
+// Kubernetes 1.35 clears failed nominations in both feature modes.
 func TestRDMAFailureNominationPolicy(t *testing.T) {
-	for _, retain := range []bool{false, true} {
+	for _, expectation := range []bool{false, true} {
 		for _, failure := range []error{ErrNoNodesAvailable, fmt.Errorf("snapshot failure")} {
-			sched := &Scheduler{nominatedNodeNameForExpectationEnabled: retain}
+			sched := &Scheduler{nominatedNodeNameForExpectationEnabled: expectation}
 			sched.SchedulePod = func(context.Context, framework.Framework, fwkapi.CycleState, *v1.Pod) (ScheduleResult, error) {
 				return ScheduleResult{}, failure
 			}
@@ -575,13 +577,107 @@ func TestRDMAFailureNominationPolicy(t *testing.T) {
 			if status.IsSuccess() {
 				t.Fatal("expected failure")
 			}
-			if retain {
-				if result.nominatingInfo != nil {
-					t.Fatalf("cleared external nomination: %+v", result.nominatingInfo)
-				}
-			} else if result.nominatingInfo == nil || result.nominatingInfo.NominatingMode != framework.ModeOverride || result.nominatingInfo.NominatedNodeName != "" {
-				t.Fatalf("expected legacy nomination clearing: %+v", result.nominatingInfo)
+			if result.nominatingInfo == nil || result.nominatingInfo.NominatingMode != fwkapi.ModeOverride || result.nominatingInfo.NominatedNodeName != "" {
+				t.Fatalf("expected nomination clearing (expectation=%v, failure=%v): %+v", expectation, failure, result.nominatingInfo)
 			}
 		}
+	}
+}
+
+type rdmaHintFramework struct {
+	framework.Framework
+	hint string
+}
+
+func (f rdmaHintFramework) GetNodeHint(context.Context, *v1.Pod, fwkapi.CycleState, int64) (string, fwkapi.PodSignature) {
+	return f.hint, nil
+}
+
+// Even if a framework supplies a batching hint, it must not short-circuit the
+// exhaustive ordinary-node phase or its safe preemption before RDMA fallback.
+func TestRDMABatchingHintPreservesPlacementOrder(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.OpportunisticBatching, true)
+	for _, tc := range []struct {
+		name                     string
+		occupantPriority         *int32
+		wantHost, wantNomination string
+	}{
+		{name: "free ordinary node", wantHost: "node1"},
+		{name: "ordinary preemption", occupantPriority: ptr.To(int32(0)), wantNomination: "node1"},
+		{name: "RDMA fallback", occupantPriority: ptr.To(int32(1000)), wantHost: "node2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRDMAFixture()
+			if tc.occupantPriority != nil {
+				f.pods = []*v1.Pod{rdmaPod("occupant", "node1", *tc.occupantPriority)}
+			}
+			sched, fwk, cs, ctx := startRDMAFixture(t, f)
+			result, status := sched.schedulePodWithPostFilter(ctx, rdmaHintFramework{Framework: fwk, hint: "node2"}, framework.NewCycleState(), f.pod)
+			if !status.IsSuccess() && tc.wantNomination == "" {
+				t.Fatalf("unexpected scheduling failure: %v", status)
+			}
+			if result.SuggestedHost != tc.wantHost {
+				t.Fatalf("host=%q, want %q", result.SuggestedHost, tc.wantHost)
+			}
+			if tc.wantNomination != "" {
+				if result.nominatingInfo == nil || result.nominatingInfo.NominatedNodeName != tc.wantNomination {
+					t.Fatalf("nomination=%+v, want %s", result.nominatingInfo, tc.wantNomination)
+				}
+				if got := waitDeletedPods(t, cs, 1); len(got) != 1 || got[0] != "occupant" {
+					t.Fatalf("victims=%v, want occupant", got)
+				}
+			} else if got := deletedPods(cs); len(got) != 0 {
+				t.Fatalf("unexpected victims: %v", got)
+			}
+		})
+	}
+}
+
+// Stateful quota and reservation filters intentionally do not implement
+// SignPlugin. The upstream batching contract must disable reuse for each of
+// these profiles; the control proves the base plugins are otherwise batchable.
+func TestCustomProfilesDisableBatching(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.OpportunisticBatching, true)
+	for _, tc := range []struct {
+		name               string
+		quota, reservation bool
+	}{
+		{name: "upstream control"},
+		{name: "quota", quota: true},
+		{name: "reservation", reservation: true},
+		{name: "quota and reservation", quota: true, reservation: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			cs := clientsetfake.NewClientset()
+			factory := informers.NewSharedInformerFactory(cs, 0)
+			plugins := []tf.RegisterPluginFunc{
+				tf.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
+				tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
+				tf.RegisterPluginAsExtensions(noderesources.Name, frameworkruntime.FactoryAdapter(feature.Features{}, noderesources.NewFit), "PreFilter", "Filter"),
+			}
+			if tc.quota {
+				plugins = append(plugins, tf.RegisterPluginAsExtensions(namespaceresourceguarantee.Name, func(ctx context.Context, _ runtime.Object, h fwkapi.Handle) (fwkapi.Plugin, error) {
+					return namespaceresourceguarantee.New(ctx, &config.NamespaceResourceGuaranteeArgs{
+						ProtectedPriorityClassName: "guaranteed",
+						NamespaceGuarantees:        map[string]v1.ResourceList{"team-a": {testGPU: resource.MustParse("4")}},
+					}, h)
+				}, "PreFilter", "Filter"))
+			}
+			if tc.reservation {
+				plugins = append(plugins, tf.RegisterPluginAsExtensions(nominatednodereservation.Name, nominatednodereservation.New, "Filter", "PostBind"))
+			}
+			fwk, err := tf.NewFramework(ctx, plugins, "better-scheduler", frameworkruntime.WithClientSet(cs),
+				frameworkruntime.WithInformerFactory(factory), frameworkruntime.WithSnapshotSharedLister(internalcache.NewEmptySnapshot()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { fwk.Close() })
+			signature := fwk.SignPod(ctx, rdmaPod("incoming", "", 1000), false)
+			wantDisabled := tc.quota || tc.reservation
+			if (signature == nil) != wantDisabled {
+				t.Fatalf("signature=%q, want disabled=%v", signature, wantDisabled)
+			}
+		})
 	}
 }

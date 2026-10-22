@@ -29,7 +29,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	clientgoevents "k8s.io/client-go/tools/events"
 	"k8s.io/component-base/metrics/testutil"
-	fwk "k8s.io/kube-scheduler/framework"
+	fwkapi "k8s.io/kube-scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	frameworkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 	schedmetrics "k8s.io/kubernetes/pkg/scheduler/metrics"
@@ -58,7 +58,7 @@ func TestFilterBlocksReservedNodeForNonHolder(t *testing.T) {
 	if status == nil {
 		t.Fatal("expected pod to be blocked by reservation")
 	}
-	if status.Code() != fwk.Unschedulable {
+	if status.Code() != fwkapi.Unschedulable {
 		t.Fatalf("unexpected status code %v", status.Code())
 	}
 	if !strings.Contains(status.Message(), ErrReasonNodeReserved) {
@@ -163,7 +163,7 @@ func TestReservationMetrics(t *testing.T) {
 			store:     SharedStore(),
 			podLister: newTestPodLister(holder),
 		}
-		if status := pl.Filter(ctx, framework.NewCycleState(), blockedPod, nodeInfo); status == nil || status.Code() != fwk.Unschedulable {
+		if status := pl.Filter(ctx, framework.NewCycleState(), blockedPod, nodeInfo); status == nil || status.Code() != fwkapi.Unschedulable {
 			t.Fatalf("expected profile %q to block pod, got %v", profile, status)
 		}
 	}
