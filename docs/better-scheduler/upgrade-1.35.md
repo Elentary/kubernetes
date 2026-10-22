@@ -65,6 +65,11 @@ mount into kube-cross. Our Docker daemon sees the shared workspace but has no
 `/etc/localtime` at the client's path. Adapt the timezone mount to copy the file
 into `_output` first, keeping build logs in the client's timezone without
 depending on the daemon's `/etc`. This is a build portability fix.
+The new wrapper also failed to pass the saved version file into a worktree build,
+producing a binary with `v0.0.0-master` metadata. Always pass the host-generated
+version file, including the release override and clean source SHA. The release
+helper now verifies the exact binary SHA and clean-tree marker as well as the
+version and platform before pushing.
 
 ## Accounting and deployment boundary
 

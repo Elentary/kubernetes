@@ -450,11 +450,15 @@ function kube::build::run_build_command_ex() {
     docker_run_opts+=(--cgroup-parent "${DOCKER_CGROUP_PARENT}")
   fi
 
-  # copy KUBE_GIT_VERSION_FILE to .dockerized-kube-version-defs and set environment variable.
+  # verify_prereqs saved version metadata for the client checkout. Always use
+  # it: worktree Git paths may be outside the container, and release overrides
+  # such as KUBE_GIT_VERSION must survive the container boundary.
   if [[ -n "${KUBE_GIT_VERSION_FILE:-}" ]]; then
-    cp "${KUBE_GIT_VERSION_FILE}" "${KUBE_ROOT}/.dockerized-kube-version-defs"
-    docker_run_opts+=(--env "KUBE_GIT_VERSION_FILE=${KUBE_CROSS_CONTAINER_ROOT}/.dockerized-kube-version-defs")
+    if [[ ! "${KUBE_GIT_VERSION_FILE}" -ef "${KUBE_ROOT}/.dockerized-kube-version-defs" ]]; then
+      cp "${KUBE_GIT_VERSION_FILE}" "${KUBE_ROOT}/.dockerized-kube-version-defs"
+    fi
   fi
+  docker_run_opts+=(--env "KUBE_GIT_VERSION_FILE=${KUBE_CROSS_CONTAINER_ROOT}/.dockerized-kube-version-defs")
 
   # If we have stdin we can run interactive.  This allows things like 'shell.sh'
   # to work.  However, if we run this way and don't have stdin, then it ends up

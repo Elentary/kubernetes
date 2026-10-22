@@ -271,6 +271,14 @@ function main() {
   actual_version=$(docker run --rm --entrypoint /usr/local/bin/kube-scheduler "${source_image}" --version)
   [[ "${actual_version}" == "Kubernetes ${release_tag}" ]] || \
     die "built scheduler version mismatch: ${actual_version} (expected Kubernetes ${release_tag})"
+  local raw_version
+  local source_sha
+  source_sha=$(git rev-parse HEAD)
+  raw_version=$(docker run --rm --entrypoint /usr/local/bin/kube-scheduler "${source_image}" --version=raw)
+  [[ "${raw_version}" == *"GitCommit:\"${source_sha}\""* ]] || \
+    die "built scheduler commit does not match ${source_sha}: ${raw_version}"
+  [[ "${raw_version}" == *'GitTreeState:"clean"'* ]] || \
+    die "built scheduler was not built from a clean tree: ${raw_version}"
   [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${source_image}")" == "linux/amd64" ]] || \
     die "built scheduler image must target linux/amd64"
 
@@ -290,4 +298,3 @@ function main() {
 }
 
 main "$@"
-
