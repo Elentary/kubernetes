@@ -60,6 +60,12 @@ The release build uses upstream's pinned Go 1.26.8 image; go.mod requires Go
 container CPU parallelism. Performance comparisons must control the toolchain
 and GOMAXPROCS.
 
+Upstream also replaced its rsync/build-image wrapper with a direct source bind
+mount into kube-cross. Our Docker daemon sees the shared workspace but has no
+`/etc/localtime` at the client's path. Adapt the timezone mount to copy the file
+into `_output` first, keeping build logs in the client's timezone without
+depending on the daemon's `/etc`. This is a build portability fix.
+
 ## Accounting and deployment boundary
 
 The scheduler correctly accounts for effective container requests and, when its

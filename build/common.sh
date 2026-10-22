@@ -428,10 +428,13 @@ function kube::build::run_build_command_ex() {
     --env 'GIT_AUTHOR_NAME=kube-build-image'
   )
 
-  # if host has localtime, mount it so we log in local time
+  # Copy localtime into the shared source tree: a Docker daemon may see the
+  # workspace volume but have a different /etc from the client container.
   if [ -f /etc/localtime ]; then
+    mkdir -p "${LOCAL_OUTPUT_ROOT}"
+    cp -L /etc/localtime "${LOCAL_OUTPUT_ROOT}/localtime"
     docker_run_opts+=(
-      --mount 'type=bind,source=/etc/localtime,target=/etc/localtime,readonly'
+      --mount "type=bind,source=${LOCAL_OUTPUT_ROOT}/localtime,target=/etc/localtime,readonly"
     )
   fi
 
