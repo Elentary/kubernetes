@@ -1,6 +1,6 @@
 # Better-Scheduler
 
-A custom `kube-scheduler` for multi-tenant GPU fairness, built as a fork of Kubernetes (currently v1.32.4, branch `CLOUD-0-better-scheduler`). It gives each team (namespace) a hard per-namespace **guarantee** of resources (`nvidia.com/gpu`, cpu, memory) for urgent workloads: pods in the *guaranteed tier* can preempt normal workloads up to their namespace guarantee, stay Pending (not rejected) above it, and get packed tightly on GPU nodes to avoid fragmentation. Everything else schedules opportunistically as usual.
+A custom `kube-scheduler` for multi-tenant GPU fairness, built as a fork of Kubernetes (this branch: v1.35.9, `codex/better-scheduler-1.35`). It gives each team (namespace) a hard per-namespace **guarantee** of resources (`nvidia.com/gpu`, cpu, memory) for urgent workloads: pods in the *guaranteed tier* can preempt normal workloads up to their namespace guarantee, stay Pending (not rejected) above it, and get packed tightly on GPU nodes to avoid fragmentation. Everything else schedules opportunistically as usual.
 
 This directory is the **source of truth** for the project. The old root `NAMESPACE_RESOURCE_GUARANTEE_DESIGN.md` is a stub pointing here. Update these docs in the same change set as any behavior change.
 
@@ -14,6 +14,7 @@ This directory is the **source of truth** for the project. The old root `NAMESPA
 | [operations.md](operations.md) | you're cutting a release, changing config, or handling an incident |
 | [history.md](history.md) | you want the why behind any version (v0.1 → v0.7), incidents included |
 | [known-issues.md](known-issues.md) | before assuming something is a bug, or planning next work |
+| [upgrade-1.35.md](upgrade-1.35.md) | you need the 1.34 → 1.35 conflict record, upstream scheduling audit, validation or rollout checks |
 | [design-review.md](design-review.md) | you want the 2026-07 adversarial design review — findings, per-finding reasoning/steelman, mitigations, and the prioritized action plan |
 | [namespace-subquotas-rfc.md](namespace-subquotas-rfc.md) | you want the proposed design for percentage-based sub-quotas, borrowing, and worker reclaim inside one namespace |
 | [better-scheduler-design.pdf](better-scheduler-design.pdf) | you want a single self-contained design doc to send to any developer (source: [design-doc.typ](design-doc.typ), rebuild with `typst compile --input rev=$(git rev-parse --short HEAD) design-doc.typ better-scheduler-design.pdf`) |
@@ -35,8 +36,8 @@ This directory is the **source of truth** for the project. The old root `NAMESPA
 ## Releases
 
 - Tag/image scheme: `v<k8s-version>-bs-v<subversion>` (e.g. `v1.32.4-bs-v0.7`), pushed to a private ECR repo; every release is a row in the ledger CSV with the immutable image digest.
-- Current release: **v1.32.4-bs-v0.7** (commit `22dfb9910d3`).
-- One-liner: `hack/release-better-scheduler.sh --upstream-version 1.32.4 --subversion <next> --push` — details in [operations.md](operations.md) §1.
+- Published releases and immutable digests: [release ledger](../../releases/better-scheduler/releases.csv).
+- One-liner for this branch: `hack/release-better-scheduler.sh --upstream-version 1.35.9 --subversion <next> --push` — details in [operations.md](operations.md) §1.
 
 ## Working on the Code (quick start for the next session)
 
