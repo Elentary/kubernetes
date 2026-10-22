@@ -187,30 +187,32 @@ go test ./test/integration/scheduler_perf/misc -run '^$' \
   -benchtime=1x -count=3 -data-items-dir=/tmp/better-scheduler-perf
 ```
 
-## Prepared image
+## Published release
 
-Built and tested on 2026-10-22:
+Published on 2026-10-22 at 12:19 UTC through
+`hack/release-better-scheduler.sh`:
 
-- Intended release version: `v1.35.9-bs-v0.1`.
-- Image source: `c330b294fae4b3e286a06d71d37a4f5ef5cd4b49` (clean tree).
-- Local image: `registry.k8s.io/kube-scheduler-amd64:v1.35.9-bs-v0.1`.
-  This tag is local; it was not pushed to registry.k8s.io.
-- Local Docker image ID: `sha256:528387227af056a9770017a22afda86a641809e27c6c885b4480bd8350e4dbc2`.
+- Annotated Git tag: `v1.35.9-bs-v0.1`.
+- Image source: `d0ca8cc7cdbece2de1c5d935ad3d83c117b2a102` (clean tree).
+- Image: `767397673936.dkr.ecr.us-east-2.amazonaws.com/better-scheduler:v1.35.9-bs-v0.1`.
+- Immutable image: `767397673936.dkr.ecr.us-east-2.amazonaws.com/better-scheduler@sha256:03d98e20bf8af268f871ad56e19ed77b044adea60743471442e621a633a148c5`.
+- Local Docker image ID: `sha256:4becc23ea9fed899c8033a34fcef847ea1d7455bc0b809c2453ddf99f6f6d666`.
 - Archive: `_output/release-images/amd64/kube-scheduler.tar`.
-- Archive SHA256: `b3c1ea8fd2f87779ea3970204372a1f06fc555a66d1397a4a146e7f237c16aad`.
+- Archive SHA256: `7dae170962972e1d94e9f6622535ce73f2c1706333bcebc68e7e48231947c05f`.
 - Platform/toolchain: linux/amd64, Go 1.26.8.
 
-ECR publication and the annotated release tag remain pending AWS SSO
-authentication for profile `av-rnd`; its prior session expired. No publication
-row was added to the release ledger. The source branch is pushed to origin.
+ECR, the annotated Git tag, binary version/source/platform and release ledger
+agree on this identity. After pulling the published image by digest, the explicit
+image smoke passed again for both container-level and pod-level requests.
+The source branch and release ledger are pushed to origin. Deployment to a live
+cluster was not performed.
 
-After authentication, release through `hack/release-better-scheduler.sh
---upstream-version 1.35.9 --subversion 0.1 --push` from a clean checkout, verify
-the resulting ECR digest/tag, rerun the image smoke using that digest, then
-record the published identity in this audit and commit the release ledger.
+Published-image verification is retained as `published-release.json`,
+`published-image-version.txt` and `published-image-smoke.log` alongside the
+release helper log in the validation directory above.
 
 ```bash
-BETTER_SCHEDULER_TEST_IMAGE=registry.k8s.io/kube-scheduler-amd64:v1.35.9-bs-v0.1 \
+BETTER_SCHEDULER_TEST_IMAGE=767397673936.dkr.ecr.us-east-2.amazonaws.com/better-scheduler@sha256:03d98e20bf8af268f871ad56e19ed77b044adea60743471442e621a633a148c5 \
 PATH="$PWD/third_party/etcd:$PATH" GOTOOLCHAIN=go1.26.8 \
 go test -count=1 -v ./test/integration/scheduler/betterimage
 ```
